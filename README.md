@@ -2,6 +2,8 @@
 
 Sistema de gestão de empréstimos. O administrador cadastra o cliente com foto, endereço, localização (se autorizada) e 3 referências de contato.
 
+**Ao vivo:** https://lucas-empred.jmdias2901.workers.dev
+
 ## Acessos
 
 | Perfil | Login | Senha |
@@ -23,4 +25,5 @@ Sistema de gestão de empréstimos. O administrador cadastra o cliente com foto,
 npm install
 npm run dev
 npm run build
+npm run deploy
 ```
