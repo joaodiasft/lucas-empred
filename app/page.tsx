@@ -4,15 +4,31 @@
 
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
 import { ConfirmModal, EmptyState, Modal, MoneyInput, PageHeader, RiskBadge, SignaturePad, StatusBadge, Stepper, SummaryCard, Toast } from './components';
-import { AppSettings, Client, Installment, Loan, Page, Reference, Role, TeamMember, currency, daysLate, defaultSettings, generateInstallments, initials, loanBalance, payableAmount, riskFor, seedClients, seedLoans, seedTeam, shortDate, uid } from './lib';
+import { AccessAccount, AppSettings, Client, GeoLocation, Installment, Loan, Page, Reference, Role, TeamMember, callHref, compressImage, currency, daysLate, defaultSettings, digitsOnly, formatAddress, generateInstallments, initials, loanBalance, mapEmbedUrl, mapOpenUrl, payableAmount, persistGet, persistSet, referenceHref, riskFor, seedAccounts, seedClients, seedLoans, seedTeam, shortDate, uid, whatsappHref } from './lib';
 
 function usePersistentState<T>(key: string, initial: T) {
-  const [state, setState] = useState<T>(() => {
-    if (typeof window === 'undefined') return initial;
-    try { return JSON.parse(localStorage.getItem(key) || '') as T; } catch { return initial; }
-  });
-  useEffect(() => { localStorage.setItem(key, JSON.stringify(state)); }, [key, state]);
+  const [state, setState] = useState<T>(initial);
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    let live = true;
+    persistGet<T>(key).then(value => {
+      if (!live) return;
+      if (value !== undefined) setState(value);
+      setHydrated(true);
+    });
+    return () => { live = false; };
+  }, [key]);
+  useEffect(() => {
+    if (!hydrated) return;
+    void persistSet(key, state);
+  }, [key, state, hydrated]);
   return [state, setState] as const;
+}
+
+function PersonPhoto({ name, photo, size = 'md' }: { name: string; photo?: string; size?: 'sm' | 'md' | 'lg' }) {
+  const cls = `avatar photo-avatar ${size === 'lg' ? 'large' : size === 'sm' ? 'small' : ''} ${photo ? 'has-photo' : 'light'}`;
+  if (photo) return <span className={cls}><img src={photo} alt={name} /></span>;
+  return <span className={cls}>{initials(name)}</span>;
 }
 
 const navItems: { page: Page; label: string; icon: string; roles: Role[] }[] = [
@@ -29,13 +45,15 @@ const navItems: { page: Page; label: string; icon: string; roles: Role[] }[] = [
 type ModalState = { type:'contract'|'renegotiate'|'payment'|'team'|'confirm-payment'|'reject-payment'; loanId?:string; installmentId?:string } | null;
 
 export default function App() {
-  const [clients, setClients] = usePersistentState<Client[]>('le-clients', seedClients);
+  const [clients, setClients] = usePersistentState<Client[]>('le-clients-v2', seedClients);
   const [loans, setLoans] = usePersistentState<Loan[]>('le-loans', seedLoans);
   const [team, setTeam] = usePersistentState<TeamMember[]>('le-team', seedTeam);
   const [settings, setSettings] = usePersistentState<AppSettings>('le-settings', defaultSettings);
+  const [accounts, setAccounts] = usePersistentState<AccessAccount[]>('le-accounts-v2', seedAccounts);
   const [role, setRole] = usePersistentState<Role>('le-role', 'admin');
   const [clientSession, setClientSession] = usePersistentState('le-client-session', seedClients[0].id);
-  const [loggedIn, setLoggedIn] = useState(true);
+  const [loggedIn, setLoggedIn] = usePersistentState('le-logged-in', false);
+  const [sessionName, setSessionName] = usePersistentState('le-session-name', 'Lucas Silva');
   const [page, setPage] = useState<Page>(role === 'client' ? 'client-home' : 'home');
   const [selectedClient, setSelectedClient] = useState<string | null>(null);
   const [selectedLoan, setSelectedLoan] = useState<string | null>(null);
@@ -52,7 +70,21 @@ export default function App() {
     if (target === 'loan-detail') setSelectedLoan(id || null);
     setPage(target); setMobileMenu(false); window.scrollTo({top:0,behavior:'smooth'});
   };
-  const addClient = (client: Client) => { setClients(items => [client, ...items]); setSelectedClient(client.id); setPage('client-detail'); notify('Cliente cadastrado com sucesso.'); };
+  const addClient = (client: Client) => {
+    setClients(items => [client, ...items]);
+    setAccounts(items => [{
+      id: uid('acc'),
+      name: client.name,
+      email: digitsOnly(client.cpf),
+      password: client.accessPin,
+      role: 'client',
+      clientId: client.id,
+      active: true,
+    }, ...items]);
+    setSelectedClient(client.id);
+    setPage('client-detail');
+    notify('Cliente cadastrado e salvo neste aparelho.');
+  };
   const createLoan = (loan: Loan) => { setLoans(items => [loan, ...items]); setSelectedLoan(loan.id); setPage('loan-detail'); notify('Empréstimo e parcelas criados com sucesso.'); };
   const updateInstallment = (loanId: string, installmentId: string, update: Partial<Installment>) => setLoans(items => items.map(loan => loan.id === loanId ? {...loan, installments:loan.installments.map(item => item.id === installmentId ? {...item,...update} : item)} : loan));
   const confirmPayment = (loanId: string, installmentId: string) => {
@@ -64,7 +96,13 @@ export default function App() {
   const markAsPaid = (loanId: string, installmentId: string, receipt?: string) => { updateInstallment(loanId, installmentId, { status:'Aguardando', receiptName:receipt }); notify('Pagamento enviado para confirmação.'); };
   const addRenegotiation = (loan: Loan) => { setLoans(items => [loan, ...items.map(item => item.id === loan.originalLoanId ? {...item,status:'Renegociado' as const} : item)]); setSelectedLoan(loan.id); setPage('loan-detail'); setModal(null); notify('Renegociação criada e vinculada ao contrato original.'); };
 
-  if (!loggedIn) return <Login clients={clients} onLogin={(newRole, clientId) => { setRole(newRole); if (clientId) setClientSession(clientId); setPage(newRole === 'client' ? 'client-home' : 'home'); setLoggedIn(true); }} />;
+  if (!loggedIn) return <Login accounts={accounts} onLogin={(account) => {
+    setRole(account.role);
+    setSessionName(account.name);
+    if (account.clientId) setClientSession(account.clientId);
+    setPage(account.role === 'client' ? 'client-home' : 'home');
+    setLoggedIn(true);
+  }} />;
 
   const allowedNav = navItems.filter(item => item.roles.includes(role));
   const pendingCount = loans.flatMap(loan => loan.installments).filter(item => item.status === 'Aguardando' || item.status === 'Atrasado').length;
@@ -103,20 +141,20 @@ export default function App() {
     <aside className={`sidebar ${mobileMenu ? 'open' : ''}`}>
       <button className="brand" onClick={() => navigate(role === 'client' ? 'client-home' : 'home')}><span className="brand-mark">L</span><span>Lucas <b>EMPRED</b></span></button>
       <nav aria-label="Navegação principal">{allowedNav.map(item => <button key={item.page} className={`nav-item ${page === item.page || (item.page === 'clients' && page.includes('client')) || (item.page === 'loans' && page.includes('loan')) ? 'active' : ''}`} onClick={() => navigate(item.page)}><span className="nav-icon">{item.icon}</span>{item.label}{item.page === 'payments' && pendingCount > 0 && <em>{pendingCount}</em>}</button>)}</nav>
-      <div className="sidebar-bottom"><div className="profile"><span className="avatar">{role === 'client' ? initials(currentClient.name) : role === 'staff' ? 'CR' : 'LS'}</span><span><b>{role === 'client' ? currentClient.name : role === 'staff' ? 'Camila Rocha' : 'Lucas Silva'}</b><small>{role === 'client' ? 'Cliente' : role === 'staff' ? 'Equipe' : 'Administrador'}</small></span></div></div>
+      <div className="sidebar-bottom"><div className="profile"><PersonPhoto name={sessionName} photo={role === 'client' ? currentClient.photo : undefined} /><span><b>{sessionName}</b><small>{role === 'client' ? 'Cliente' : role === 'staff' ? 'Equipe' : 'Administrador'}</small></span></div></div>
     </aside>
     {mobileMenu && <button className="menu-scrim" aria-label="Fechar menu" onClick={() => setMobileMenu(false)} />}
     <section className="main-area">
       <header className="topbar">
         <div className="mobile-brand"><button className="hamburger" onClick={() => setMobileMenu(true)} aria-label="Abrir menu">☰</button><span className="mini-mark">L</span></div>
-        <div className="top-title"><p className="eyebrow">{new Intl.DateTimeFormat('pt-BR',{weekday:'long',day:'2-digit',month:'long'}).format(new Date()).toUpperCase()}</p><h1>{page === 'home' ? `Olá, ${role === 'staff' ? 'Camila' : 'Lucas'}` : currentTitle}</h1></div>
+        <div className="top-title"><p className="eyebrow">{new Intl.DateTimeFormat('pt-BR',{weekday:'long',day:'2-digit',month:'long'}).format(new Date()).toUpperCase()}</p><h1>{page === 'home' ? `Olá, ${sessionName.split(' ')[0]}` : currentTitle}</h1></div>
         <div className="top-actions">
           <button className="icon-button notification-button" onClick={() => setNotificationsOpen(value => !value)} aria-label="Notificações">●{pendingCount > 0 && <em>{pendingCount}</em>}</button>
           {role !== 'client' && <button className="primary-button desktop-action" onClick={() => navigate('new-loan')}>＋ Novo empréstimo</button>}
-          <button className="top-avatar" onClick={() => setAccountOpen(value => !value)}>{role === 'client' ? initials(currentClient.name) : role === 'staff' ? 'CR' : 'LS'}</button>
+          <button className="top-avatar has-photo-btn" onClick={() => setAccountOpen(value => !value)}>{role === 'client' && currentClient.photo ? <img src={currentClient.photo} alt="" /> : initials(sessionName)}</button>
         </div>
         {notificationsOpen && <Notifications loans={loans} clients={clients} onClose={() => setNotificationsOpen(false)} onOpen={(loanId) => { setNotificationsOpen(false); navigate('loan-detail',loanId); }} />}
-        {accountOpen && <div className="account-menu"><b>{role === 'client' ? currentClient.name : role === 'staff' ? 'Camila Rocha' : 'Lucas Silva'}</b><small>{role === 'client' ? currentClient.cpf : role === 'staff' ? 'Acesso da equipe' : 'Acesso total'}</small><button onClick={() => { setAccountOpen(false); setLoggedIn(false); }}>Trocar perfil / sair</button></div>}
+        {accountOpen && <div className="account-menu"><b>{sessionName}</b><small>{role === 'client' ? currentClient.cpf : role === 'staff' ? 'Acesso da equipe' : 'Acesso total do administrador'}</small><button onClick={() => { setAccountOpen(false); setLoggedIn(false); }}>Encerrar sessão</button></div>}
       </header>
       <div className="content">{view}</div>
     </section>
@@ -131,9 +169,75 @@ export default function App() {
   </main>;
 }
 
-function Login({ clients, onLogin }: { clients: Client[]; onLogin:(role:Role,clientId?:string)=>void }) {
-  const [role, setRole] = useState<Role>('admin'); const [clientId,setClientId] = useState(clients[0]?.id || ''); const [password,setPassword] = useState('');
-  return <main className="login-page"><section className="login-brand"><div className="login-logo"><span>L</span>Lucas <b>EMPRED</b></div><div><p>Gestão que transmite confiança.</p><h1>Controle cada empréstimo do início ao fim.</h1><span>Clientes, contratos, cobranças semanais e resultados em um só lugar.</span></div><small>Ambiente demonstrativo • dados armazenados neste dispositivo</small></section><section className="login-panel"><form onSubmit={event => {event.preventDefault();onLogin(role,role === 'client' ? clientId : undefined)}}><p className="eyebrow">BEM-VINDO DE VOLTA</p><h2>Acesse sua conta</h2><p className="form-intro">Escolha o perfil para explorar cada área do sistema.</p><div className="role-picker">{(['admin','staff','client'] as Role[]).map(item => <button type="button" className={role === item ? 'active' : ''} onClick={() => setRole(item)} key={item}>{item === 'admin' ? 'Admin' : item === 'staff' ? 'Equipe' : 'Cliente'}</button>)}</div>{role === 'client' ? <label>Cliente<select value={clientId} onChange={event => setClientId(event.target.value)}>{clients.map(client => <option value={client.id} key={client.id}>{client.name}</option>)}</select></label> : <label>E-mail<input type="email" defaultValue={role === 'admin' ? 'admin@lucasempred.com.br' : 'camila@lucasempred.com.br'} /></label>}<label>Senha<div className="password-field"><input type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Digite qualquer senha" required /><span>●●</span></div></label><button className="primary-button login-button">Entrar no sistema</button><small className="demo-note">Nesta fase, o acesso é simulado. A autenticação segura será conectada depois.</small></form></section></main>;
+function Login({ accounts, onLogin }: { accounts: AccessAccount[]; onLogin:(account:AccessAccount)=>void }) {
+  const [role, setRole] = useState<Role>('admin');
+  const [login, setLogin] = useState('admin@lucasempred.com.br');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  const hint = role === 'admin'
+    ? 'E-mail do administrador'
+    : role === 'staff'
+      ? 'E-mail da equipe'
+      : 'CPF do cliente, só números ou com pontuação';
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const key = digitsOnly(login) === login.replace(/\s/g, '') && role === 'client' ? digitsOnly(login) : login.trim().toLowerCase();
+    const account = accounts.find(item => {
+      if (!item.active || item.role !== role) return false;
+      const email = item.email.toLowerCase();
+      return email === login.trim().toLowerCase() || digitsOnly(item.email) === digitsOnly(login) || email === key;
+    });
+    if (!account || account.password !== password) {
+      setError(role === 'client' ? 'CPF ou PIN incorreto.' : 'E-mail ou senha incorretos.');
+      return;
+    }
+    onLogin(account);
+  };
+  return (
+    <main className="login-page">
+      <section className="login-brand">
+        <div className="login-logo"><span>L</span>Lucas <b>EMPRED</b></div>
+        <div>
+          <p>Gestão com foto, endereço e referências reais.</p>
+          <h1>Cada cliente entra com identidade, localização e três contatos.</h1>
+          <span>O administrador cadastra, a foto fica salva neste aparelho e as referências abrem WhatsApp ou ligação.</span>
+        </div>
+        <ul className="login-points">
+          <li>Foto do cliente no cadastro</li>
+          <li>Endereço + GPS se a pessoa permitir</li>
+          <li>3 referências com WhatsApp ou telefone</li>
+        </ul>
+      </section>
+      <section className="login-panel">
+        <form onSubmit={submit}>
+          <p className="eyebrow">ACESSO SEGURO</p>
+          <h2>Entrar no sistema</h2>
+          <p className="form-intro">Use o perfil correspondente. O administrador cadastra clientes e libera o PIN de acesso.</p>
+          <div className="role-picker">{(['admin','staff','client'] as Role[]).map(item => (
+            <button type="button" className={role === item ? 'active' : ''} onClick={() => { setRole(item); setError(''); setLogin(item === 'admin' ? 'admin@lucasempred.com.br' : item === 'staff' ? 'camila@lucasempred.com.br' : ''); setPassword(''); }} key={item}>
+              {item === 'admin' ? 'Admin' : item === 'staff' ? 'Equipe' : 'Cliente'}
+            </button>
+          ))}</div>
+          <label>{role === 'client' ? 'CPF' : 'E-mail'}<input required autoComplete="username" value={login} onChange={event => { setLogin(event.target.value); setError(''); }} placeholder={hint} /></label>
+          <label>{role === 'client' ? 'PIN de 4 dígitos' : 'Senha'}
+            <div className="password-field">
+              <input required type={showPass ? 'text' : 'password'} value={password} onChange={event => { setPassword(event.target.value); setError(''); }} placeholder={role === 'client' ? 'Últimos 4 do telefone' : 'Sua senha'} autoComplete="current-password" />
+              <button type="button" className="ghost-inline" onClick={() => setShowPass(value => !value)}>{showPass ? 'Ocultar' : 'Ver'}</button>
+            </div>
+          </label>
+          {error && <p className="login-error">{error}</p>}
+          <button className="primary-button login-button">Entrar no sistema</button>
+          <div className="access-card">
+            <b>Acessos iniciais</b>
+            <p>Admin: admin@lucasempred.com.br · Lucas2026</p>
+            <p>Equipe:  camila@lucasempred.com.br · Equipe2026</p>
+            <p>Cliente: CPF da ficha · PIN = 4 últimos do telefone</p>
+          </div>
+        </form>
+      </section>
+    </main>
+  );
 }
 
 function AdminHome({ clients, loans, role, onNavigate, onNewLoan }: { clients:Client[]; loans:Loan[]; role:Role; onNavigate:(page:Page,id?:string)=>void; onNewLoan:()=>void }) {
@@ -154,24 +258,152 @@ function AdminHome({ clients, loans, role, onNavigate, onNewLoan }: { clients:Cl
 
 function ClientsView({ clients, loans, onOpen, onNew }: { clients:Client[]; loans:Loan[]; onOpen:(id:string)=>void; onNew:()=>void }) {
   const [search,setSearch]=useState(''); const filtered=clients.filter(client=>`${client.name} ${client.cpf} ${client.phone}`.toLowerCase().includes(search.toLowerCase()));
-  return <><PageHeader eyebrow="CARTEIRA DE CLIENTES" title="Clientes" subtitle={`${clients.length} pessoas cadastradas`} action={<button className="primary-button" onClick={onNew}>＋ Novo cliente</button>}/><div className="toolbar"><label className="search-field"><span>⌕</span><input value={search} onChange={event=>setSearch(event.target.value)} placeholder="Buscar por nome, CPF ou telefone"/></label><select aria-label="Filtrar risco"><option>Todos os riscos</option><option>Baixo risco</option><option>Médio risco</option><option>Alto risco</option></select></div><section className="table-card"><div className="data-table client-table"><div className="table-row table-head"><span>Cliente</span><span>Contato</span><span>Score</span><span>Em aberto</span><span></span></div>{filtered.map(client=>{const risk=riskFor(client,loans);const active=loans.filter(loan=>loan.clientId===client.id&&loan.status==='Ativo');return <button className="table-row" key={client.id} onClick={()=>onOpen(client.id)}><span className="person-cell"><i className="avatar light">{initials(client.name)}</i><span><b>{client.name}</b><small>{client.cpf}</small></span></span><span><b>{client.phone}</b><small>{client.address.split('—')[0]}</small></span><RiskBadge level={risk.level} score={risk.score}/><span><b>{currency(active.reduce((sum,loan)=>sum+loanBalance(loan),0))}</b><small>{active.length} contrato(s)</small></span><span className="row-arrow">›</span></button>})}</div>{!filtered.length&&<EmptyState title="Nenhum cliente encontrado" text="Tente outro termo de busca."/>}</section></>;
+  return <><PageHeader eyebrow="CARTEIRA DE CLIENTES" title="Clientes" subtitle={`${clients.length} pessoas cadastradas`} action={<button className="primary-button" onClick={onNew}>＋ Novo cliente</button>}/><div className="toolbar"><label className="search-field"><span>⌕</span><input value={search} onChange={event=>setSearch(event.target.value)} placeholder="Buscar por nome, CPF ou telefone"/></label><select aria-label="Filtrar risco"><option>Todos os riscos</option><option>Baixo risco</option><option>Médio risco</option><option>Alto risco</option></select></div><section className="table-card"><div className="data-table client-table"><div className="table-row table-head"><span>Cliente</span><span>Contato</span><span>Score</span><span>Em aberto</span><span></span></div>{filtered.map(client=>{const risk=riskFor(client,loans);const active=loans.filter(loan=>loan.clientId===client.id&&loan.status==='Ativo');return <button className="table-row" key={client.id} onClick={()=>onOpen(client.id)}><span className="person-cell"><PersonPhoto name={client.name} photo={client.photo} /><span><b>{client.name}</b><small>{client.cpf}</small></span></span><span><b>{client.phone}</b><small>{client.neighborhood || client.city || client.address}</small></span><RiskBadge level={risk.level} score={risk.score}/><span><b>{currency(active.reduce((sum,loan)=>sum+loanBalance(loan),0))}</b><small>{active.length} contrato(s)</small></span><span className="row-arrow">›</span></button>})}</div>{!filtered.length&&<EmptyState title="Nenhum cliente encontrado" text="Tente outro termo de busca."/>}</section></>;
+}
+
+function emptyRef(): { name: string; phone: string; relation: string; hasWhatsapp: boolean } {
+  return { name: '', phone: '', relation: '', hasWhatsapp: true };
 }
 
 function NewClientView({ onSave, onCancel }: { onSave:(client:Client)=>void; onCancel:()=>void }) {
-  const [step,setStep]=useState(0); const [signature,setSignature]=useState(''); const [documents,setDocuments]=useState<string[]>([]); const [form,setForm]=useState({name:'',cpf:'',rg:'',phone:'',address:'',income:0,ref1:'',phone1:'',ref2:'',phone2:''});
-  const update=(key:string,value:string|number)=>setForm(state=>({...state,[key]:value}));
-  const submit=(event:FormEvent)=>{event.preventDefault();if(step<2){setStep(value=>value+1);return;}const references:Reference[]=[{name:form.ref1,phone:form.phone1,validated:false},{name:form.ref2,phone:form.phone2,validated:false}];onSave({id:uid('cli'),name:form.name,cpf:form.cpf,rg:form.rg,phone:form.phone,address:form.address,income:form.income,references,documents,signature,createdAt:new Date().toISOString().slice(0,10)});};
-  return <><PageHeader eyebrow="NOVO CADASTRO" title="Cadastrar cliente" subtitle="Preencha os dados em três etapas. Você poderá editar depois."/><Stepper steps={['Dados pessoais','Documentos','Referências e assinatura']} active={step}/><form className="form-card" onSubmit={submit}>{step===0&&<><div className="form-section-title"><span>1</span><div><h3>Dados pessoais</h3><p>Informações básicas para identificar e contatar o cliente.</p></div></div><div className="form-grid"><label className="span-2">Nome completo<input required value={form.name} onChange={e=>update('name',e.target.value)} placeholder="Nome sem abreviações"/></label><label>CPF<input required value={form.cpf} onChange={e=>update('cpf',e.target.value)} placeholder="000.000.000-00"/></label><label>RG<input required value={form.rg} onChange={e=>update('rg',e.target.value)} placeholder="Documento de identidade"/></label><label>Telefone<input required value={form.phone} onChange={e=>update('phone',e.target.value)} placeholder="(00) 00000-0000"/></label><label>Renda mensal<MoneyInput value={form.income} onChange={value=>update('income',value)} required/></label><label className="span-2">Endereço completo<input required value={form.address} onChange={e=>update('address',e.target.value)} placeholder="Rua, número, bairro e cidade"/></label></div></>}{step===1&&<><div className="form-section-title"><span>2</span><div><h3>Documentos</h3><p>Adicione comprovante de renda e documento com foto.</p></div></div><label className="upload-zone"><input type="file" multiple accept="image/*,.pdf" onChange={event=>setDocuments(Array.from(event.target.files||[]).map(file=>file.name))}/><span>↑</span><b>Toque para selecionar arquivos</b><small>Fotos ou PDF • os arquivos serão conectados ao armazenamento depois</small></label>{documents.length>0&&<div className="file-list">{documents.map(file=><span key={file}>▤ {file}</span>)}</div>}</>}{step===2&&<><div className="form-section-title"><span>3</span><div><h3>Referências e assinatura</h3><p>Cadastre duas referências pessoais e capture a assinatura.</p></div></div><div className="reference-grid"><div><h4>Referência 1</h4><label>Nome<input required value={form.ref1} onChange={e=>update('ref1',e.target.value)}/></label><label>Telefone<input required value={form.phone1} onChange={e=>update('phone1',e.target.value)}/></label></div><div><h4>Referência 2</h4><label>Nome<input required value={form.ref2} onChange={e=>update('ref2',e.target.value)}/></label><label>Telefone<input required value={form.phone2} onChange={e=>update('phone2',e.target.value)}/></label></div></div><label className="standalone-label">Assinatura digital</label><SignaturePad value={signature} onChange={setSignature}/></>}<div className="form-actions"><button type="button" className="secondary-button" onClick={step?()=>setStep(value=>value-1):onCancel}>{step?'Voltar':'Cancelar'}</button><button className="primary-button">{step===2?'Salvar cliente':'Continuar →'}</button></div></form></>;
+  const [step, setStep] = useState(0);
+  const [signature, setSignature] = useState('');
+  const [documents, setDocuments] = useState<string[]>([]);
+  const [photo, setPhoto] = useState('');
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [geoStatus, setGeoStatus] = useState<'idle' | 'loading' | 'granted' | 'denied'>('idle');
+  const [location, setLocation] = useState<GeoLocation | null>(null);
+  const [form, setForm] = useState({
+    name: '', cpf: '', rg: '', phone: '', income: 0,
+    zip: '', street: '', number: '', complement: '', neighborhood: '', city: '', state: '',
+  });
+  const [refs, setRefs] = useState([emptyRef(), emptyRef(), emptyRef()]);
+  const update = (key: string, value: string | number) => setForm(state => ({ ...state, [key]: value }));
+  const updateRef = (index: number, key: string, value: string | boolean) => setRefs(items => items.map((item, i) => i === index ? { ...item, [key]: value } : item));
+
+  const capturePhoto = async (file?: File) => {
+    if (!file) return;
+    setPhotoBusy(true);
+    try { setPhoto(await compressImage(file)); } finally { setPhotoBusy(false); }
+  };
+
+  const requestLocation = () => {
+    if (!navigator.geolocation) { setGeoStatus('denied'); return; }
+    setGeoStatus('loading');
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const next = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, capturedAt: new Date().toISOString() };
+      setLocation(next);
+      setGeoStatus('granted');
+      try {
+        const response = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${next.lat}&longitude=${next.lng}&localityLanguage=pt`);
+        const data = await response.json() as { postcode?: string; city?: string; locality?: string; principalSubdivisionCode?: string; principalSubdivision?: string; localityInfo?: { administrative?: { name: string; adminLevel: number }[] } };
+        const neighborhood = data.localityInfo?.administrative?.find(item => item.adminLevel === 8)?.name || data.locality || '';
+        setForm(state => ({
+          ...state,
+          zip: data.postcode || state.zip,
+          city: data.city || data.locality || state.city,
+          state: (data.principalSubdivisionCode || data.principalSubdivision || state.state).replace('BR-', ''),
+          neighborhood: neighborhood || state.neighborhood,
+        }));
+      } catch { /* keep coordinates even if reverse geocode fails */ }
+    }, () => setGeoStatus('denied'), { enableHighAccuracy: true, timeout: 14000 });
+  };
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (step === 1 && !photo) return;
+    if (step < 3) { setStep(value => value + 1); return; }
+    const address = formatAddress(form);
+    const pin = digitsOnly(form.phone).slice(-4) || '2026';
+    const references: Reference[] = refs.map(item => ({ ...item, validated: false }));
+    onSave({
+      id: uid('cli'), name: form.name, cpf: form.cpf, rg: form.rg, phone: form.phone, income: form.income,
+      zip: form.zip, street: form.street, number: form.number, complement: form.complement, neighborhood: form.neighborhood, city: form.city, state: form.state,
+      address, photo, location, locationConsent: geoStatus === 'granted', accessPin: pin, references, documents, signature,
+      createdAt: new Date().toISOString().slice(0, 10),
+    });
+  };
+
+  return <>
+    <PageHeader eyebrow="CADASTRO DO ADMINISTRADOR" title="Cadastrar cliente" subtitle="Comece pelo endereço. A foto do cliente e as três referências ficam salvas neste aparelho." />
+    <Stepper steps={['Endereço e localização', 'Dados e foto', '3 referências', 'Documentos']} active={step} />
+    <form className="form-card" onSubmit={submit}>
+      {step === 0 && <>
+        <div className="form-section-title"><span>1</span><div><h3>Endereço e localização</h3><p>O endereço é obrigatório. A localização no mapa só entra se a pessoa permitir.</p></div></div>
+        <div className="location-banner">
+          <div><b>Usar a localização do celular?</b><p>{geoStatus === 'granted' ? 'Localização salva e visível no mapa da ficha.' : geoStatus === 'denied' ? 'Permissão recusada. Continue só com o endereço digitado.' : 'Peça autorização e capture o ponto no mapa, se a pessoa aceitar.'}</p></div>
+          <button type="button" className="outline-button" onClick={requestLocation} disabled={geoStatus === 'loading'}>{geoStatus === 'loading' ? 'Capturando…' : geoStatus === 'granted' ? 'Atualizar GPS' : 'Permitir localização'}</button>
+        </div>
+        {location && <iframe className="map-frame" title="Localização do cliente" src={mapEmbedUrl(location)} />}
+        <div className="form-grid">
+          <label>CEP<input required value={form.zip} onChange={e => update('zip', e.target.value)} placeholder="00000-000" /></label>
+          <label>UF<input required maxLength={2} value={form.state} onChange={e => update('state', e.target.value.toUpperCase())} placeholder="SP" /></label>
+          <label className="span-2">Rua / avenida<input required value={form.street} onChange={e => update('street', e.target.value)} placeholder="Nome da via" /></label>
+          <label>Número<input required value={form.number} onChange={e => update('number', e.target.value)} placeholder="Nº" /></label>
+          <label>Complemento<input value={form.complement} onChange={e => update('complement', e.target.value)} placeholder="Apto, casa, bloco" /></label>
+          <label>Bairro<input required value={form.neighborhood} onChange={e => update('neighborhood', e.target.value)} /></label>
+          <label>Cidade<input required value={form.city} onChange={e => update('city', e.target.value)} /></label>
+        </div>
+      </>}
+      {step === 1 && <>
+        <div className="form-section-title"><span>2</span><div><h3>Foto e dados do cliente</h3><p>Anexe a foto da própria pessoa. Ela fica salva na ficha.</p></div></div>
+        <div className="photo-capture">
+          {photo ? <img src={photo} alt="Foto do cliente" /> : <span className="photo-placeholder">{photoBusy ? '…' : 'Foto'}</span>}
+          <div>
+            <b>Foto do cliente</b>
+            <p>Use a câmera frontal ou escolha uma imagem nítida do rosto.</p>
+            <div className="photo-actions">
+              <label className="primary-button file-button">Tirar / escolher foto<input required={!photo} type="file" accept="image/*" capture="user" onChange={event => void capturePhoto(event.target.files?.[0])} /></label>
+              {photo && <button type="button" className="secondary-button" onClick={() => setPhoto('')}>Trocar foto</button>}
+            </div>
+          </div>
+        </div>
+        <div className="form-grid">
+          <label className="span-2">Nome completo<input required value={form.name} onChange={e => update('name', e.target.value)} placeholder="Nome sem abreviações" /></label>
+          <label>CPF<input required value={form.cpf} onChange={e => update('cpf', e.target.value)} placeholder="000.000.000-00" /></label>
+          <label>RG<input required value={form.rg} onChange={e => update('rg', e.target.value)} /></label>
+          <label>Telefone / WhatsApp<input required value={form.phone} onChange={e => update('phone', e.target.value)} placeholder="(00) 00000-0000" /></label>
+          <label>Renda mensal<MoneyInput value={form.income} onChange={value => update('income', value)} required /></label>
+        </div>
+      </>}
+      {step === 2 && <>
+        <div className="form-section-title"><span>3</span><div><h3>Três referências de contato</h3><p>Se tiver WhatsApp, o botão abre a conversa. Se não tiver, o botão liga.</p></div></div>
+        <div className="reference-grid three">
+          {refs.map((item, index) => (
+            <div key={index}>
+              <h4>Referência {index + 1}</h4>
+              <label>Nome<input required value={item.name} onChange={e => updateRef(index, 'name', e.target.value)} /></label>
+              <label>Parentesco / relação<input required value={item.relation} onChange={e => updateRef(index, 'relation', e.target.value)} placeholder="Mãe, amigo, trabalho" /></label>
+              <label>Telefone<input required value={item.phone} onChange={e => updateRef(index, 'phone', e.target.value)} placeholder="(00) 00000-0000" /></label>
+              <label className="toggle-line"><input type="checkbox" checked={item.hasWhatsapp} onChange={e => updateRef(index, 'hasWhatsapp', e.target.checked)} /><span>Tem WhatsApp. Se desmarcar, o contato vira ligação.</span></label>
+            </div>
+          ))}
+        </div>
+      </>}
+      {step === 3 && <>
+        <div className="form-section-title"><span>4</span><div><h3>Documentos e assinatura</h3><p>Comprovantes extras e a assinatura digital, se já puder coletar.</p></div></div>
+        <label className="upload-zone"><input type="file" multiple accept="image/*,.pdf" onChange={event => setDocuments(Array.from(event.target.files || []).map(file => file.name))} /><span>↑</span><b>Toque para selecionar arquivos</b><small>Fotos ou PDF do comprovante e documento</small></label>
+        {documents.length > 0 && <div className="file-list">{documents.map(file => <span key={file}>▤ {file}</span>)}</div>}
+        <label className="standalone-label">Assinatura digital</label>
+        <SignaturePad value={signature} onChange={setSignature} />
+        <p className="save-note">Ao salvar, a foto, o endereço, o GPS (se permitido) e as 3 referências ficam gravados neste aparelho, inclusive no PIN de acesso do cliente (4 últimos dígitos do telefone).</p>
+      </>}
+      <div className="form-actions">
+        <button type="button" className="secondary-button" onClick={step ? () => setStep(value => value - 1) : onCancel}>{step ? 'Voltar' : 'Cancelar'}</button>
+        <button className="primary-button">{step === 3 ? 'Salvar cliente' : 'Continuar →'}</button>
+      </div>
+    </form>
+  </>;
 }
 
 function ClientDetail({ client, loans, onOpenLoan, onNewLoan, onValidateReference }: {client:Client;loans:Loan[];onOpenLoan:(id:string)=>void;onNewLoan:()=>void;onValidateReference:(index:number)=>void}) {
   const clientLoans=loans.filter(loan=>loan.clientId===client.id);const risk=riskFor(client,loans);const paid=clientLoans.flatMap(loan=>loan.installments).filter(item=>item.status==='Pago').length;const late=clientLoans.flatMap(loan=>loan.installments).filter(item=>item.status==='Atrasado').length;
-  return <><PageHeader eyebrow="FICHA DO CLIENTE" title={client.name} subtitle={`${client.cpf} • Cliente desde ${shortDate(client.createdAt)}`} action={<button className="primary-button" onClick={onNewLoan}>＋ Novo empréstimo</button>}/><div className="detail-grid"><section className="profile-card panel"><div className="client-hero"><span className="avatar large">{initials(client.name)}</span><div><h3>{client.name}</h3><p>{client.phone}</p></div></div><dl><div><dt>RG</dt><dd>{client.rg}</dd></div><div><dt>Renda declarada</dt><dd>{currency(client.income)}</dd></div><div className="span-2"><dt>Endereço</dt><dd>{client.address}</dd></div></dl></section><section className="risk-card panel"><div className="risk-score"><div className={`score-ring ${risk.level==='Baixo risco'?'low':risk.level==='Médio risco'?'medium':'high'}`} style={{'--score':`${risk.score*3.6}deg`} as React.CSSProperties}><span>{risk.score}<small>/100</small></span></div><div><p className="eyebrow">ANÁLISE AUTOMÁTICA</p><h3>{risk.level}</h3><p>{risk.level==='Baixo risco'?'Perfil recomendado para análise de crédito.':'Revise os fatores antes de aprovar.'}</p></div></div><ul>{risk.reasons.slice(0,3).map(reason=><li key={reason}>✓ {reason}</li>)}</ul></section></div><section className="summary-grid three"><SummaryCard label="Saldo em aberto" value={currency(clientLoans.reduce((sum,loan)=>sum+loanBalance(loan),0))} detail={`${clientLoans.filter(item=>item.status==='Ativo').length} contratos ativos`} /><SummaryCard label="Parcelas pagas" value={String(paid)} detail="Histórico confirmado" tone="green"/><SummaryCard label="Parcelas atrasadas" value={String(late)} detail={late?'Requer atenção':'Tudo em dia'} tone={late?'red':'green'}/></section><div className="detail-grid"><section className="panel"><div className="panel-head"><h3>Empréstimos</h3></div>{clientLoans.length?<div className="compact-list">{clientLoans.map(loan=><button key={loan.id} onClick={()=>onOpenLoan(loan.id)}><span><b>{loan.contractNumber}</b><small>{currency(loan.principal)} • {loan.weeks} semanas</small></span><StatusBadge status={loan.status}/><strong>{currency(loanBalance(loan))}</strong><i>›</i></button>)}</div>:<EmptyState title="Sem empréstimos" text="Este cliente ainda não possui contratos."/>}</section><section className="panel"><div className="panel-head"><h3>Referências pessoais</h3><span className="subtle-count">{client.references.filter(ref=>ref.validated).length}/2 validadas</span></div><div className="reference-list">{client.references.map((ref,index)=><div key={`${ref.name}-${index}`}><span className="avatar light">{initials(ref.name)}</span><span><b>{ref.name}</b><small>{ref.phone}</small></span>{ref.validated?<span className="verified">✓ Validada</span>:<button className="outline-button small" onClick={()=>onValidateReference(index)}>Validar</button>}</div>)}</div><div className="document-list"><h4>Documentos</h4>{client.documents.length?client.documents.map(file=><button key={file}>▤ {file}<span>Visualizar</span></button>):<p>Nenhum documento anexado.</p>}</div></section></div></>;
+  return <><PageHeader eyebrow="FICHA DO CLIENTE" title={client.name} subtitle={`${client.cpf} • Cliente desde ${shortDate(client.createdAt)}`} action={<button className="primary-button" onClick={onNewLoan}>＋ Novo empréstimo</button>}/><div className="detail-grid"><section className="profile-card panel"><div className="client-hero"><PersonPhoto name={client.name} photo={client.photo} size="lg" /><div><h3>{client.name}</h3><p>{client.phone}</p><div className="hero-actions"><a className="wa-button" href={whatsappHref(client.phone)} target="_blank" rel="noreferrer">WhatsApp do cliente</a><a className="call-button" href={callHref(client.phone)}>Ligar</a></div></div></div><dl><div><dt>RG</dt><dd>{client.rg}</dd></div><div><dt>Renda declarada</dt><dd>{currency(client.income)}</dd></div><div className="span-2"><dt>Endereço</dt><dd>{client.address}</dd></div><div className="span-2"><dt>Acesso do cliente</dt><dd>CPF · PIN {client.accessPin}</dd></div></dl>{client.location ? <div className="map-block"><iframe title="Localização" src={mapEmbedUrl(client.location)} /><a href={mapOpenUrl(client.location)} target="_blank" rel="noreferrer">Abrir mapa</a></div> : <p className="muted-note">{client.locationConsent ? 'Localização não capturada.' : 'A pessoa não permitiu a localização. O endereço digitado permanece salvo.'}</p>}</section><section className="risk-card panel"><div className="risk-score"><div className={`score-ring ${risk.level==='Baixo risco'?'low':risk.level==='Médio risco'?'medium':'high'}`} style={{'--score':`${risk.score*3.6}deg`} as React.CSSProperties}><span>{risk.score}<small>/100</small></span></div><div><p className="eyebrow">ANÁLISE AUTOMÁTICA</p><h3>{risk.level}</h3><p>{risk.level==='Baixo risco'?'Perfil recomendado para análise de crédito.':'Revise os fatores antes de aprovar.'}</p></div></div><ul>{risk.reasons.slice(0,3).map(reason=><li key={reason}>✓ {reason}</li>)}</ul></section></div><section className="summary-grid three"><SummaryCard label="Saldo em aberto" value={currency(clientLoans.reduce((sum,loan)=>sum+loanBalance(loan),0))} detail={`${clientLoans.filter(item=>item.status==='Ativo').length} contratos ativos`} /><SummaryCard label="Parcelas pagas" value={String(paid)} detail="Histórico confirmado" tone="green"/><SummaryCard label="Parcelas atrasadas" value={String(late)} detail={late?'Requer atenção':'Tudo em dia'} tone={late?'red':'green'}/></section><div className="detail-grid"><section className="panel"><div className="panel-head"><h3>Empréstimos</h3></div>{clientLoans.length?<div className="compact-list">{clientLoans.map(loan=><button key={loan.id} onClick={()=>onOpenLoan(loan.id)}><span><b>{loan.contractNumber}</b><small>{currency(loan.principal)} • {loan.weeks} semanas</small></span><StatusBadge status={loan.status}/><strong>{currency(loanBalance(loan))}</strong><i>›</i></button>)}</div>:<EmptyState title="Sem empréstimos" text="Este cliente ainda não possui contratos."/>}</section><section className="panel"><div className="panel-head"><h3>Referências pessoais</h3><span className="subtle-count">{client.references.filter(ref=>ref.validated).length}/{client.references.length} validadas</span></div><div className="reference-list">{client.references.map((ref,index)=><div key={`${ref.name}-${index}`}><span className="avatar light">{initials(ref.name)}</span><span><b>{ref.name}</b><small>{ref.relation} • {ref.phone}</small></span><a className={ref.hasWhatsapp ? 'wa-button compact' : 'call-button compact'} href={referenceHref(ref)} target={ref.hasWhatsapp ? '_blank' : undefined} rel="noreferrer">{ref.hasWhatsapp ? 'WhatsApp' : 'Ligar'}</a>{ref.validated?<span className="verified">✓ Validada</span>:<button className="outline-button small" onClick={()=>onValidateReference(index)}>Validar</button>}</div>)}</div><div className="document-list"><h4>Documentos</h4>{client.documents.length?client.documents.map(file=><button key={file}>▤ {file}<span>Visualizar</span></button>):<p>Nenhum documento anexado.</p>}</div></section></div></>;
 }
 
 function LoansView({ loans, clients, onOpen, onNew }: {loans:Loan[];clients:Client[];onOpen:(id:string)=>void;onNew:()=>void}) {
   const [search,setSearch]=useState('');const [filter,setFilter]=useState('Todos');const list=loans.filter(loan=>{const client=clients.find(c=>c.id===loan.clientId);return `${client?.name} ${loan.contractNumber}`.toLowerCase().includes(search.toLowerCase())&&(filter==='Todos'||loan.status===filter)});
-  return <><PageHeader eyebrow="CARTEIRA" title="Empréstimos" subtitle={`${loans.filter(item=>item.status==='Ativo').length} contratos ativos`} action={<button className="primary-button" onClick={onNew}>＋ Novo empréstimo</button>}/><section className="summary-grid three"><SummaryCard label="Capital emprestado" value={currency(loans.reduce((sum,loan)=>sum+loan.principal,0))}/><SummaryCard label="Saldo da carteira" value={currency(loans.reduce((sum,loan)=>sum+loanBalance(loan),0))} tone="gold"/><SummaryCard label="Juros contratados" value={currency(loans.reduce((sum,loan)=>sum+loan.installments.reduce((s,i)=>s+i.interest,0),0))} tone="green"/></section><div className="toolbar"><label className="search-field"><span>⌕</span><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar cliente ou contrato"/></label><select value={filter} onChange={e=>setFilter(e.target.value)}><option>Todos</option><option>Ativo</option><option>Quitado</option><option>Renegociado</option></select></div><section className="loan-card-grid">{list.map(loan=>{const client=clients.find(c=>c.id===loan.clientId)!;const paid=loan.installments.filter(i=>i.status==='Pago').length;return <button className="loan-card" key={loan.id} onClick={()=>onOpen(loan.id)}><div className="loan-card-top"><span className="avatar light">{initials(client.name)}</span><span><b>{client.name}</b><small>{loan.contractNumber}</small></span><StatusBadge status={loan.status}/></div><div className="loan-values"><span><small>Emprestado</small><b>{currency(loan.principal)}</b></span><span><small>Saldo</small><b>{currency(loanBalance(loan))}</b></span></div><div className="progress"><span style={{width:`${paid/loan.installments.length*100}%`}}/></div><div className="loan-card-foot"><span>{paid} de {loan.installments.length} parcelas pagas</span><b>{loan.rate}% juros</b></div></button>})}</section>{!list.length&&<EmptyState title="Nenhum empréstimo" text="Ajuste os filtros ou crie um novo contrato." action={<button className="primary-button" onClick={onNew}>Novo empréstimo</button>}/>}</>;
+  return <><PageHeader eyebrow="CARTEIRA" title="Empréstimos" subtitle={`${loans.filter(item=>item.status==='Ativo').length} contratos ativos`} action={<button className="primary-button" onClick={onNew}>＋ Novo empréstimo</button>}/><section className="summary-grid three"><SummaryCard label="Capital emprestado" value={currency(loans.reduce((sum,loan)=>sum+loan.principal,0))}/><SummaryCard label="Saldo da carteira" value={currency(loans.reduce((sum,loan)=>sum+loanBalance(loan),0))} tone="gold"/><SummaryCard label="Juros contratados" value={currency(loans.reduce((sum,loan)=>sum+loan.installments.reduce((s,i)=>s+i.interest,0),0))} tone="green"/></section><div className="toolbar"><label className="search-field"><span>⌕</span><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar cliente ou contrato"/></label><select value={filter} onChange={e=>setFilter(e.target.value)}><option>Todos</option><option>Ativo</option><option>Quitado</option><option>Renegociado</option></select></div><section className="loan-card-grid">{list.map(loan=>{const client=clients.find(c=>c.id===loan.clientId)!;const paid=loan.installments.filter(i=>i.status==='Pago').length;return <button className="loan-card" key={loan.id} onClick={()=>onOpen(loan.id)}><div className="loan-card-top"><PersonPhoto name={client.name} photo={client.photo} /><span><b>{client.name}</b><small>{loan.contractNumber}</small></span><StatusBadge status={loan.status}/></div><div className="loan-values"><span><small>Emprestado</small><b>{currency(loan.principal)}</b></span><span><small>Saldo</small><b>{currency(loanBalance(loan))}</b></span></div><div className="progress"><span style={{width:`${paid/loan.installments.length*100}%`}}/></div><div className="loan-card-foot"><span>{paid} de {loan.installments.length} parcelas pagas</span><b>{loan.rate}% juros</b></div></button>})}</section>{!list.length&&<EmptyState title="Nenhum empréstimo" text="Ajuste os filtros ou crie um novo contrato." action={<button className="primary-button" onClick={onNew}>Novo empréstimo</button>}/>}</>;
 }
 
 function NewLoanView({ clients, loans, settings, prefilledClient, onSave, onCancel }: {clients:Client[];loans:Loan[];settings:AppSettings;prefilledClient?:string;onSave:(loan:Loan)=>void;onCancel:()=>void}) {
