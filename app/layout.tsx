@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  metadataBase: new URL('http://localhost:3000'),
+  metadataBase: new URL('https://lucas-empred.martinha123.chatgpt.site'),
   title: 'Lucas EMPRED — Gestão de empréstimos',
   description: 'Gestão simples e segura de clientes, empréstimos e cobranças semanais.',
   openGraph: {
