@@ -1,5 +1,6 @@
 export type Role = 'admin' | 'staff' | 'client';
-export type Page = 'home' | 'clients' | 'new-client' | 'client-detail' | 'loans' | 'new-loan' | 'loan-detail' | 'payments' | 'dashboard' | 'team' | 'settings' | 'client-home';
+export type PayFrequency = 'weekly' | 'monthly';
+export type Page = 'home' | 'clients' | 'new-client' | 'client-detail' | 'loans' | 'new-loan' | 'loan-detail' | 'payments' | 'calendar' | 'collections' | 'reports' | 'dashboard' | 'team' | 'settings' | 'client-home';
 export type RiskLevel = 'Baixo risco' | 'Médio risco' | 'Alto risco';
 export type InstallmentStatus = 'Pendente' | 'Aguardando' | 'Pago' | 'Atrasado';
 
@@ -39,6 +40,7 @@ export interface Client {
   documents: string[];
   signature?: string;
   createdAt: string;
+  active: boolean;
 }
 export interface AccessAccount {
   id: string;
@@ -55,12 +57,12 @@ export interface Installment {
 }
 export interface Loan {
   id: string; clientId: string; contractNumber: string; principal: number; rate: number;
-  interestMode: 'total' | 'balance'; weeks: number; firstDueDate: string;
+  interestMode: 'total' | 'balance'; weeks: number; firstDueDate: string; frequency?: PayFrequency;
   feeType: 'fixed' | 'percent'; feeValue: number; lateInterest: number; status: 'Ativo' | 'Quitado' | 'Renegociado';
   installments: Installment[]; createdAt: string; originalLoanId?: string;
 }
 export interface TeamMember { id: string; name: string; email: string; active: boolean; permissions: string[] }
-export interface AppSettings { companyName: string; document: string; phone: string; pixKey: string; defaultRate: number; defaultWeeks: number; feeType: 'fixed' | 'percent'; feeValue: number; lateInterest: number; reminderDays: number }
+export interface AppSettings { companyName: string; document: string; phone: string; pixKey: string; defaultRate: number; defaultWeeks: number; defaultFrequency: PayFrequency; feeType: 'fixed' | 'percent'; feeValue: number; lateInterest: number; reminderDays: number }
 
 const today = new Date();
 const dateAt = (days: number) => {
@@ -188,19 +190,73 @@ export function compressImage(file: File, maxSize = 720, quality = 0.82): Promis
   });
 }
 
-export function generateInstallments(input: Pick<Loan, 'principal' | 'rate' | 'interestMode' | 'weeks' | 'firstDueDate'>): Installment[] {
-  const weeks = Math.max(1, Number(input.weeks));
-  const principalPart = input.principal / weeks;
+export function toIsoDate(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+export function parseIsoDate(value: string) {
+  return new Date(`${value}T12:00:00`);
+}
+
+export function addDays(date: Date, amount: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
+export function startOfWeek(date: Date) {
+  const next = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const weekday = next.getDay();
+  next.setDate(next.getDate() + (weekday === 0 ? -6 : 1 - weekday));
+  return next;
+}
+
+export function weekDays(anchor: Date) {
+  const start = startOfWeek(anchor);
+  return Array.from({ length: 7 }, (_, index) => addDays(start, index));
+}
+
+export function monthCells(anchor: Date) {
+  const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const start = startOfWeek(first);
+  return Array.from({ length: 42 }, (_, index) => addDays(start, index));
+}
+
+export function loanFrequency(loan: Pick<Loan, 'frequency'>): PayFrequency {
+  return loan.frequency === 'monthly' ? 'monthly' : 'weekly';
+}
+
+export function frequencyLabel(frequency: PayFrequency) {
+  return frequency === 'monthly' ? 'Mensal' : 'Semanal';
+}
+
+export function periodLabel(loan: Pick<Loan, 'weeks' | 'frequency'>) {
+  const count = Math.max(1, loan.weeks);
+  if (loanFrequency(loan) === 'monthly') return count === 1 ? '1 mês' : `${count} meses`;
+  return count === 1 ? '1 semana' : `${count} semanas`;
+}
+
+export function liveStatus(item: Installment): InstallmentStatus {
+  if (item.status === 'Pago' || item.status === 'Aguardando') return item.status;
+  if (daysLate(item.dueDate) > 0) return 'Atrasado';
+  return item.status;
+}
+
+export function generateInstallments(input: Pick<Loan, 'principal' | 'rate' | 'interestMode' | 'weeks' | 'firstDueDate'> & { frequency?: PayFrequency }): Installment[] {
+  const count = Math.max(1, Number(input.weeks));
+  const frequency = input.frequency === 'monthly' ? 'monthly' : 'weekly';
+  const principalPart = input.principal / count;
   let balance = input.principal;
   const totalInterest = input.principal * (input.rate / 100);
-  return Array.from({ length: weeks }, (_, index) => {
-    const due = new Date(`${input.firstDueDate}T12:00:00`);
-    due.setDate(due.getDate() + index * 7);
-    const interest = input.interestMode === 'total' ? totalInterest / weeks : balance * (input.rate / 100) / weeks;
-    const principal = index === weeks - 1 ? balance : principalPart;
+  return Array.from({ length: count }, (_, index) => {
+    const due = parseIsoDate(input.firstDueDate);
+    if (frequency === 'monthly') due.setMonth(due.getMonth() + index);
+    else due.setDate(due.getDate() + index * 7);
+    const interest = input.interestMode === 'total' ? totalInterest / count : balance * (input.rate / 100) / count;
+    const principal = index === count - 1 ? balance : principalPart;
     balance -= principal;
     return {
-      id: uid('parc'), number: index + 1, dueDate: due.toISOString().slice(0, 10), principal,
+      id: uid('parc'), number: index + 1, dueDate: toIsoDate(due), principal,
       interest, amount: principal + interest, paidAmount: 0, status: 'Pendente' as InstallmentStatus,
     };
   });
@@ -240,11 +296,16 @@ export function riskFor(client: Client, loans: Loan[], requested = 0): { score: 
   return { score, level: score >= 72 ? 'Baixo risco' : score >= 48 ? 'Médio risco' : 'Alto risco', reasons };
 }
 
-function clientSeed(partial: Omit<Client, 'address' | 'locationConsent' | 'accessPin'> & Partial<Pick<Client, 'location' | 'locationConsent' | 'accessPin'>>): Client {
+export function isClientActive(client: Pick<Client, 'active'>) {
+  return client.active !== false;
+}
+
+function clientSeed(partial: Omit<Client, 'address' | 'locationConsent' | 'accessPin' | 'active'> & Partial<Pick<Client, 'location' | 'locationConsent' | 'accessPin' | 'active'>>): Client {
   const address = formatAddress(partial);
   return {
     locationConsent: Boolean(partial.location),
     accessPin: digitsOnly(partial.phone).slice(-4) || '2026',
+    active: true,
     ...partial,
     address,
   };
@@ -272,7 +333,7 @@ export const seedAccounts: AccessAccount[] = [
 ];
 
 function seededLoan(id: string, clientId: string, principal: number, rate: number, weeks: number, firstDue: string, paidCount: number, lateIndex = -1): Loan {
-  const base: Loan = { id, clientId, contractNumber:`LE-2026-${id.slice(-3).toUpperCase()}`, principal, rate, interestMode:'total', weeks, firstDueDate:firstDue, feeType:'percent', feeValue:2, lateInterest:.033, status:'Ativo', installments:[], createdAt:dateAt(-70) };
+  const base: Loan = { id, clientId, contractNumber:`LE-2026-${id.slice(-3).toUpperCase()}`, principal, rate, interestMode:'total', weeks, firstDueDate:firstDue, frequency:'weekly', feeType:'percent', feeValue:2, lateInterest:.033, status:'Ativo', installments:[], createdAt:dateAt(-70) };
   base.installments = generateInstallments(base).map((item, index) => index < paidCount ? {...item,status:'Pago',paidAmount:item.amount,paidAt:dateAt(-14 + index * 7)} : index === lateIndex ? {...item,status:'Atrasado'} : item);
   return base;
 }
@@ -289,4 +350,4 @@ export const seedTeam: TeamMember[] = [
   { id:'team-2', name:'Daniel Costa', email:'daniel@lucasempred.com.br', active:true, permissions:['Cadastrar clientes','Criar empréstimos','Registrar pagamentos'] },
 ];
 
-export const defaultSettings: AppSettings = { companyName:'Lucas EMPRED', document:'48.271.930/0001-40', phone:'(11) 99999-2026', pixKey:'financeiro@lucasempred.com.br', defaultRate:20, defaultWeeks:12, feeType:'percent', feeValue:2, lateInterest:.033, reminderDays:2 };
+export const defaultSettings: AppSettings = { companyName:'Lucas EMPRED', document:'48.271.930/0001-40', phone:'(11) 99999-2026', pixKey:'financeiro@lucasempred.com.br', defaultRate:20, defaultWeeks:12, defaultFrequency:'weekly', feeType:'percent', feeValue:2, lateInterest:.033, reminderDays:2 };

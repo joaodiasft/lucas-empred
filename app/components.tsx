@@ -3,8 +3,8 @@
 import { PointerEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { InstallmentStatus, RiskLevel, currency } from './lib';
 
-export function StatusBadge({ status }: { status: InstallmentStatus | 'Ativo' | 'Quitado' | 'Renegociado' }) {
-  const key = status.toLowerCase().replace(' ', '-').replace('aguardando', 'waiting').replace('pendente','pending').replace('pago','paid').replace('atrasado','late').replace('ativo','active').replace('quitado','paid').replace('renegociado','neutral');
+export function StatusBadge({ status }: { status: InstallmentStatus | 'Ativo' | 'Quitado' | 'Renegociado' | 'Inativo' }) {
+  const key = status.toLowerCase().replace(' ', '-').replace('aguardando', 'waiting').replace('pendente','pending').replace('pago','paid').replace('atrasado','late').replace('ativo','active').replace('quitado','paid').replace('renegociado','neutral').replace('inativo','inactive');
   return <span className={`status-badge ${key}`}>{status === 'Aguardando' ? 'Aguardando confirmação' : status}</span>;
 }
 
@@ -66,6 +66,55 @@ export function SignaturePad({ value, onChange }: { value?: string; onChange: (v
   const end = () => { if (!drawing.current) return; drawing.current = false; onChange(canvasRef.current!.toDataURL('image/png')); };
   const clear = () => { const canvas = canvasRef.current!; canvas.getContext('2d')!.clearRect(0,0,canvas.width,canvas.height); onChange(''); };
   return <div className="signature-pad"><canvas ref={canvasRef} width={720} height={210} onPointerDown={start} onPointerMove={move} onPointerUp={end} onPointerCancel={end} aria-label="Área para assinatura digital" /><div className="signature-line"><span>Assine acima usando o dedo ou mouse</span><button type="button" onClick={clear}>Limpar</button></div></div>;
+}
+
+export function FieldBlock({ title, hint, className = '', children }: { title: string; hint: string; className?: string; children: ReactNode }) {
+  return (
+    <div className={`explained-field ${className}`.trim()}>
+      <b>{title}</b>
+      <em>{hint}</em>
+      {children}
+    </div>
+  );
+}
+
+export function InterestGuide({
+  principal, rate, weeks, frequency, mode,
+}: {
+  principal: number; rate: number; weeks: number; frequency: 'weekly' | 'monthly'; mode: 'total' | 'balance';
+}) {
+  const count = Math.max(1, Number(weeks) || 1);
+  const interest = principal * (rate / 100);
+  const total = principal + interest;
+  const parcel = total / count;
+  const unit = frequency === 'monthly' ? (count === 1 ? 'mês' : 'meses') : (count === 1 ? 'semana' : 'semanas');
+  const cadence = frequency === 'monthly' ? 'mês' : 'semana';
+  return (
+    <aside className="interest-guide">
+      <h4>Como os juros funcionam neste contrato</h4>
+      <p>
+        Você empresta um valor (o principal). A taxa é o percentual cobrado sobre esse valor.
+        O prazo divide o total em parcelas {frequency === 'monthly' ? 'mensais' : 'semanais'}.
+        Multa e mora só entram se o cliente atrasar.
+      </p>
+      <div className="interest-example">
+        <small>Exemplo com os números atuais</small>
+        {mode === 'total' ? (
+          <p>
+            Emprestando <b>{currency(principal)}</b> com <b>{String(rate).replace('.', ',')}%</b> em <b>{count} {unit}</b>,
+            os juros são <b>{currency(interest)}</b>. O cliente devolve <b>{currency(total)}</b>,
+            em parcelas iguais de cerca de <b>{currency(parcel)}</b> por {cadence}.
+          </p>
+        ) : (
+          <p>
+            Emprestando <b>{currency(principal)}</b> com <b>{String(rate).replace('.', ',')}%</b> sobre o saldo,
+            os juros caem a cada parcela paga. As primeiras ficam mais altas; as últimas, menores.
+            O prazo continua sendo <b>{count} {unit}</b>.
+          </p>
+        )}
+      </div>
+    </aside>
+  );
 }
 
 export function EmptyState({ title, text, action }: { title: string; text: string; action?: ReactNode }) {
