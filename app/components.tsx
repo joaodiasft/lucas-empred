@@ -1,7 +1,7 @@
 'use client';
 
 import { PointerEvent, ReactNode, useEffect, useRef, useState } from 'react';
-import { InstallmentStatus, RiskLevel, currency } from './lib';
+import { InstallmentStatus, RiskLevel, currency, formatRate, rateFromInterest, roundCents, splitEqual } from './lib';
 
 export function StatusBadge({ status }: { status: InstallmentStatus | 'Ativo' | 'Quitado' | 'Renegociado' | 'Inativo' }) {
   const key = status.toLowerCase().replace(' ', '-').replace('aguardando', 'waiting').replace('pendente','pending').replace('pago','paid').replace('atrasado','late').replace('ativo','active').replace('quitado','paid').replace('renegociado','neutral').replace('inativo','inactive');
@@ -36,7 +36,11 @@ export function ConfirmModal({ title, description, confirmLabel = 'Confirmar', d
 
 export function MoneyInput({ value, onChange, id, required }: { value: number; onChange: (value: number) => void; id?: string; required?: boolean }) {
   const [text, setText] = useState(value ? currency(value) : '');
-  return <div className="money-input"><span>R$</span><input id={id} inputMode="decimal" required={required} value={text.replace(/^R\$\s?/, '')} placeholder="0,00" onFocus={() => setText(value ? value.toFixed(2).replace('.', ',') : '')} onChange={event => { const raw = event.target.value.replace(/[^\d,]/g, '').replace(',', '.'); setText(event.target.value); onChange(Number(raw) || 0); }} onBlur={() => setText(value ? currency(value) : '')} /></div>;
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focused.current) setText(value ? currency(value) : '');
+  }, [value]);
+  return <div className="money-input"><span>R$</span><input id={id} inputMode="decimal" required={required} value={text.replace(/^R\$\s?/, '')} placeholder="0,00" onFocus={() => { focused.current = true; setText(value ? value.toFixed(2).replace('.', ',') : ''); }} onChange={event => { const raw = event.target.value.replace(/[^\d,]/g, '').replace(',', '.'); setText(event.target.value); onChange(Number(raw) || 0); }} onBlur={() => { focused.current = false; setText(value ? currency(value) : ''); }} /></div>;
 }
 
 export function Stepper({ steps, active }: { steps: string[]; active: number }) {
@@ -71,47 +75,33 @@ export function SignaturePad({ value, onChange }: { value?: string; onChange: (v
 export function FieldBlock({ title, hint, className = '', children }: { title: string; hint: string; className?: string; children: ReactNode }) {
   return (
     <div className={`explained-field ${className}`.trim()}>
-      <b>{title}</b>
-      <em>{hint}</em>
+      <span className="field-label">{title}</span>
+      {hint && <p className="field-caption">{hint}</p>}
       {children}
     </div>
   );
 }
 
 export function InterestGuide({
-  principal, rate, weeks, frequency, mode,
+  principal, interest, weeks, frequency,
 }: {
-  principal: number; rate: number; weeks: number; frequency: 'weekly' | 'monthly'; mode: 'total' | 'balance';
+  principal: number; interest: number; weeks: number; frequency: 'weekly' | 'monthly';
 }) {
   const count = Math.max(1, Number(weeks) || 1);
-  const interest = principal * (rate / 100);
-  const total = principal + interest;
-  const parcel = total / count;
+  const total = roundCents(principal + interest);
+  const parcel = splitEqual(total, count)[0] || 0;
+  const rate = rateFromInterest(principal, interest);
   const unit = frequency === 'monthly' ? (count === 1 ? 'mês' : 'meses') : (count === 1 ? 'semana' : 'semanas');
-  const cadence = frequency === 'monthly' ? 'mês' : 'semana';
   return (
     <aside className="interest-guide">
-      <h4>Como os juros funcionam neste contrato</h4>
-      <p>
-        Você empresta um valor (o principal). A taxa é o percentual cobrado sobre esse valor.
-        O prazo divide o total em parcelas {frequency === 'monthly' ? 'mensais' : 'semanais'}.
-        Multa e mora só entram se o cliente atrasar.
-      </p>
+      <h4>Resumo desta conta</h4>
+      <p>O juros entra em reais. A porcentagem e as parcelas iguais aparecem em seguida.</p>
       <div className="interest-example">
-        <small>Exemplo com os números atuais</small>
-        {mode === 'total' ? (
-          <p>
-            Emprestando <b>{currency(principal)}</b> com <b>{String(rate).replace('.', ',')}%</b> em <b>{count} {unit}</b>,
-            os juros são <b>{currency(interest)}</b>. O cliente devolve <b>{currency(total)}</b>,
-            em parcelas iguais de cerca de <b>{currency(parcel)}</b> por {cadence}.
-          </p>
-        ) : (
-          <p>
-            Emprestando <b>{currency(principal)}</b> com <b>{String(rate).replace('.', ',')}%</b> sobre o saldo,
-            os juros caem a cada parcela paga. As primeiras ficam mais altas; as últimas, menores.
-            O prazo continua sendo <b>{count} {unit}</b>.
-          </p>
-        )}
+        <small>Agora</small>
+        <p>
+          {currency(principal)} emprestados + {currency(interest)} de juros ({formatRate(rate)}%) =
+          {' '}{currency(total)} em {count} {unit}, de {currency(parcel)} cada.
+        </p>
       </div>
     </aside>
   );

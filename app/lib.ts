@@ -1,6 +1,11 @@
 export type Role = 'admin' | 'staff' | 'client';
-export type PayFrequency = 'weekly' | 'monthly';
+export type PayFrequency = 'daily' | 'weekly' | 'fortnightly' | 'monthly';
+export type LoanType = 'personal' | 'business' | 'emergency' | 'refinancing' | 'other';
+export type LoanCategory = 'cash' | 'vehicle' | 'home' | 'health' | 'education' | 'business' | 'other';
+export type LoanPlanMode = 'contract_total' | 'monthly_split' | 'fixed_installment';
+export type PenaltyMode = 'none' | 'fixed_once' | 'percent_once' | 'fixed_daily' | 'percent_daily';
 export type Page = 'home' | 'clients' | 'new-client' | 'client-detail' | 'loans' | 'new-loan' | 'loan-detail' | 'payments' | 'calendar' | 'collections' | 'reports' | 'dashboard' | 'team' | 'settings' | 'client-home';
+export type PaymentMethod = 'cash' | 'pix' | 'transfer';
 export type RiskLevel = 'Baixo risco' | 'Médio risco' | 'Alto risco';
 export type InstallmentStatus = 'Pendente' | 'Aguardando' | 'Pago' | 'Atrasado';
 
@@ -54,12 +59,21 @@ export interface AccessAccount {
 export interface Installment {
   id: string; number: number; dueDate: string; principal: number; interest: number;
   amount: number; paidAmount: number; status: InstallmentStatus; paidAt?: string; receiptName?: string;
+  paymentMethod?: PaymentMethod;
+}
+export interface PaymentRecord {
+  paidAmount: number;
+  paidAt: string;
+  paymentMethod: PaymentMethod;
+  receiptName?: string;
 }
 export interface Loan {
   id: string; clientId: string; contractNumber: string; principal: number; rate: number;
   interestMode: 'total' | 'balance'; weeks: number; firstDueDate: string; frequency?: PayFrequency;
   feeType: 'fixed' | 'percent'; feeValue: number; lateInterest: number; status: 'Ativo' | 'Quitado' | 'Renegociado';
   installments: Installment[]; createdAt: string; originalLoanId?: string;
+  loanType?: LoanType; category?: LoanCategory; planMode?: LoanPlanMode; termMonths?: number;
+  fixedInstallment?: number; paymentWeekdays?: number[]; penaltyMode?: PenaltyMode; penaltyValue?: number;
 }
 export interface TeamMember { id: string; name: string; email: string; active: boolean; permissions: string[] }
 export interface AppSettings { companyName: string; document: string; phone: string; pixKey: string; defaultRate: number; defaultWeeks: number; defaultFrequency: PayFrequency; feeType: 'fixed' | 'percent'; feeValue: number; lateInterest: number; reminderDays: number }
@@ -223,17 +237,38 @@ export function monthCells(anchor: Date) {
 }
 
 export function loanFrequency(loan: Pick<Loan, 'frequency'>): PayFrequency {
-  return loan.frequency === 'monthly' ? 'monthly' : 'weekly';
+  if (loan.frequency === 'daily' || loan.frequency === 'fortnightly' || loan.frequency === 'monthly') return loan.frequency;
+  return 'weekly';
 }
 
 export function frequencyLabel(frequency: PayFrequency) {
-  return frequency === 'monthly' ? 'Mensal' : 'Semanal';
+  if (frequency === 'daily') return 'Diário';
+  if (frequency === 'fortnightly') return 'Quinzenal';
+  if (frequency === 'monthly') return 'Mensal';
+  return 'Semanal';
 }
 
-export function periodLabel(loan: Pick<Loan, 'weeks' | 'frequency'>) {
+export function periodLabel(loan: Pick<Loan, 'weeks' | 'frequency' | 'termMonths'>) {
+  if (loan.termMonths) return loan.termMonths === 1 ? '1 mês' : `${loan.termMonths} meses`;
   const count = Math.max(1, loan.weeks);
   if (loanFrequency(loan) === 'monthly') return count === 1 ? '1 mês' : `${count} meses`;
+  if (loanFrequency(loan) === 'daily') return count === 1 ? '1 diária' : `${count} diárias`;
+  if (loanFrequency(loan) === 'fortnightly') return count === 1 ? '1 quinzena' : `${count} quinzenas`;
   return count === 1 ? '1 semana' : `${count} semanas`;
+}
+
+export function loanTypeLabel(value?: LoanType) {
+  return ({ personal:'Empréstimo pessoal', business:'Capital de giro', emergency:'Emergência', refinancing:'Renegociação', other:'Outro' } as Record<LoanType,string>)[value || 'personal'];
+}
+
+export function loanCategoryLabel(value?: LoanCategory) {
+  return ({ cash:'Dinheiro / PIX', vehicle:'Veículo', home:'Casa e reforma', health:'Saúde', education:'Educação', business:'Negócio', other:'Outros' } as Record<LoanCategory,string>)[value || 'cash'];
+}
+
+export function planModeLabel(value?: LoanPlanMode) {
+  if (value === 'monthly_split') return 'Total mensal dividido no calendário';
+  if (value === 'fixed_installment') return 'Parcela fixa por vencimento';
+  return 'Total do contrato em parcelas';
 }
 
 export function liveStatus(item: Installment): InstallmentStatus {
@@ -242,29 +277,196 @@ export function liveStatus(item: Installment): InstallmentStatus {
   return item.status;
 }
 
-export function generateInstallments(input: Pick<Loan, 'principal' | 'rate' | 'interestMode' | 'weeks' | 'firstDueDate'> & { frequency?: PayFrequency }): Installment[] {
+export function roundCents(value: number) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+export function splitEqual(total: number, count: number) {
+  const n = Math.max(1, Number(count) || 1);
+  const cents = Math.round(roundCents(total) * 100);
+  const base = Math.floor(cents / n);
+  const remainder = cents - base * n;
+  return Array.from({ length: n }, (_, index) => (base + (index === n - 1 ? remainder : 0)) / 100);
+}
+
+export function rateFromInterest(principal: number, interest: number) {
+  if (!principal) return 0;
+  return roundCents((interest / principal) * 100);
+}
+
+export function formatRate(rate: number) {
+  return rate.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+export function generateInstallments(input: Pick<Loan, 'principal' | 'rate' | 'interestMode' | 'weeks' | 'firstDueDate'> & { frequency?: PayFrequency; interestAmount?: number }): Installment[] {
   const count = Math.max(1, Number(input.weeks));
-  const frequency = input.frequency === 'monthly' ? 'monthly' : 'weekly';
-  const principalPart = input.principal / count;
-  let balance = input.principal;
-  const totalInterest = input.principal * (input.rate / 100);
-  return Array.from({ length: count }, (_, index) => {
+  const frequency = input.frequency || 'weekly';
+  const principalTotal = Math.max(0, roundCents(input.principal));
+  const totalInterest = input.interestAmount != null
+    ? Math.max(0, roundCents(input.interestAmount))
+    : Math.max(0, roundCents(principalTotal * (input.rate / 100)));
+  const total = roundCents(principalTotal + totalInterest);
+  const amounts = splitEqual(total, count);
+  const principals = splitEqual(principalTotal, count);
+  return amounts.map((amount, index) => {
     const due = parseIsoDate(input.firstDueDate);
     if (frequency === 'monthly') due.setMonth(due.getMonth() + index);
+    else if (frequency === 'fortnightly') due.setDate(due.getDate() + index * 15);
+    else if (frequency === 'daily') due.setDate(due.getDate() + index);
     else due.setDate(due.getDate() + index * 7);
-    const interest = input.interestMode === 'total' ? totalInterest / count : balance * (input.rate / 100) / count;
-    const principal = index === count - 1 ? balance : principalPart;
-    balance -= principal;
+    const principal = principals[index];
+    const interest = roundCents(amount - principal);
     return {
       id: uid('parc'), number: index + 1, dueDate: toIsoDate(due), principal,
-      interest, amount: principal + interest, paidAmount: 0, status: 'Pendente' as InstallmentStatus,
+      interest, amount, paidAmount: 0, status: 'Pendente' as InstallmentStatus,
     };
   });
+}
+
+export interface FlexibleScheduleInput {
+  principal: number;
+  rate: number;
+  firstDueDate: string;
+  frequency: PayFrequency;
+  planMode: LoanPlanMode;
+  installmentCount: number;
+  termMonths: number;
+  fixedInstallment: number;
+  paymentWeekdays?: number[];
+}
+
+function addMonthsClamped(date: Date, months: number) {
+  const wantedDay = date.getDate();
+  const next = new Date(date.getFullYear(), date.getMonth() + months, 1);
+  const lastDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+  next.setDate(Math.min(wantedDay, lastDay));
+  return next;
+}
+
+function nextScheduleDate(date: Date, frequency: PayFrequency, weekdays: number[]) {
+  const next = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  if (frequency === 'monthly') return addMonthsClamped(next, 1);
+  next.setDate(next.getDate() + (frequency === 'fortnightly' ? 15 : frequency === 'weekly' ? 7 : 1));
+  if (frequency === 'daily') {
+    const allowed = weekdays.length ? weekdays : [1,2,3,4,5,6];
+    while (!allowed.includes(next.getDay())) next.setDate(next.getDate() + 1);
+  }
+  return next;
+}
+
+function scheduleDates(input: FlexibleScheduleInput) {
+  const weekdays = input.paymentWeekdays?.length ? input.paymentWeekdays : [1,2,3,4,5,6];
+  let cursor = parseIsoDate(input.firstDueDate);
+  if (input.frequency === 'daily') {
+    while (!weekdays.includes(cursor.getDay())) cursor.setDate(cursor.getDate() + 1);
+  }
+  if (input.planMode === 'contract_total') {
+    const count = Math.max(1, Math.min(1000, Number(input.installmentCount) || 1));
+    return Array.from({ length: count }, (_, index) => {
+      if (!index) return new Date(cursor);
+      cursor = nextScheduleDate(cursor, input.frequency, weekdays);
+      return new Date(cursor);
+    });
+  }
+  const months = Math.max(1, Math.min(60, Number(input.termMonths) || 1));
+  const lastMonth = new Date(cursor.getFullYear(), cursor.getMonth() + months, 0, 23, 59, 59);
+  const dates: Date[] = [];
+  while (cursor <= lastMonth && dates.length < 1000) {
+    dates.push(new Date(cursor));
+    cursor = nextScheduleDate(cursor, input.frequency, weekdays);
+  }
+  return dates;
+}
+
+export function generateFlexibleInstallments(input: FlexibleScheduleInput): Installment[] {
+  const dates = scheduleDates(input);
+  if (!dates.length) return [];
+  const principal = Math.max(0, roundCents(input.principal));
+
+  if (input.planMode === 'contract_total') {
+    const interest = roundCents(principal * (Math.max(0, input.rate) / 100));
+    const amounts = splitEqual(principal + interest, dates.length);
+    const principals = splitEqual(principal, dates.length);
+    return dates.map((due, index) => ({
+      id: uid('parc'), number:index + 1, dueDate:toIsoDate(due), principal:principals[index],
+      interest:roundCents(amounts[index] - principals[index]), amount:amounts[index], paidAmount:0, status:'Pendente',
+    }));
+  }
+
+  const monthKeys = [...new Set(dates.map(date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2,'0')}`))];
+  const principalsByMonth = splitEqual(principal, Math.max(1, input.termMonths));
+  let number = 0;
+  const result: Installment[] = [];
+  monthKeys.forEach((monthKey, monthIndex) => {
+    const monthDates = dates.filter(date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2,'0')}` === monthKey);
+    const monthPrincipal = principalsByMonth[monthIndex] || 0;
+    const monthTotal = input.planMode === 'fixed_installment'
+      ? roundCents(Math.max(0, input.fixedInstallment) * monthDates.length)
+      : roundCents(monthPrincipal + principal * (Math.max(0, input.rate) / 100));
+    const amounts = input.planMode === 'fixed_installment'
+      ? monthDates.map(() => roundCents(Math.max(0, input.fixedInstallment)))
+      : splitEqual(monthTotal, monthDates.length);
+    const monthPrincipalUsed = Math.min(monthPrincipal, monthTotal);
+    const principalParts = splitEqual(monthPrincipalUsed, monthDates.length);
+    monthDates.forEach((due, index) => {
+      number += 1;
+      result.push({ id:uid('parc'), number, dueDate:toIsoDate(due), principal:principalParts[index],
+        interest:roundCents(amounts[index] - principalParts[index]), amount:amounts[index], paidAmount:0, status:'Pendente' });
+    });
+  });
+  if (input.planMode === 'fixed_installment') {
+    const total = roundCents(result.reduce((sum, item) => sum + item.amount, 0));
+    const principalParts = splitEqual(Math.min(principal, total), result.length);
+    return result.map((item, index) => ({ ...item, principal:principalParts[index], interest:roundCents(item.amount - principalParts[index]) }));
+  }
+  return result;
+}
+
+export function installmentMonthKey(value: string) {
+  return value.slice(0, 7);
+}
+
+export function monthLabel(value: string) {
+  const date = new Date(`${value}-01T12:00:00`);
+  const label = new Intl.DateTimeFormat('pt-BR', { month:'long', year:'numeric' }).format(date);
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+export function paymentMethodLabel(method?: PaymentMethod) {
+  if (method === 'cash') return 'Dinheiro';
+  if (method === 'transfer') return 'Transferência';
+  if (method === 'pix') return 'PIX';
+  return 'Não informado';
+}
+
+export function applyInstallmentPayment(loan: Loan, installmentId: string, payment: PaymentRecord): Loan {
+  const installments = loan.installments.map(item => item.id === installmentId ? {
+    ...item,
+    status: 'Pago' as const,
+    paidAmount: payment.paidAmount,
+    paidAt: payment.paidAt,
+    paymentMethod: payment.paymentMethod,
+    receiptName: payment.receiptName || item.receiptName,
+  } : item);
+  const allPaid = installments.every(item => item.status === 'Pago');
+  return {
+    ...loan,
+    installments,
+    status: loan.status === 'Ativo' && allPaid ? 'Quitado' : loan.status,
+  };
 }
 
 export function payableAmount(loan: Loan, installment: Installment) {
   const lateDays = daysLate(installment.dueDate);
   if (!lateDays || installment.status === 'Pago') return installment.amount;
+  if (loan.penaltyMode) {
+    const value = Math.max(0, loan.penaltyValue || 0);
+    if (loan.penaltyMode === 'none') return installment.amount;
+    if (loan.penaltyMode === 'fixed_daily') return roundCents(installment.amount + value * lateDays);
+    if (loan.penaltyMode === 'percent_daily') return roundCents(installment.amount + installment.amount * (value / 100) * lateDays);
+    if (loan.penaltyMode === 'fixed_once') return roundCents(installment.amount + value);
+    return roundCents(installment.amount + installment.amount * (value / 100));
+  }
   const fee = loan.feeType === 'fixed' ? loan.feeValue : installment.amount * (loan.feeValue / 100);
   const mora = installment.amount * (loan.lateInterest / 100) * lateDays;
   return installment.amount + fee + mora;

@@ -35,12 +35,13 @@ function messageFor(tone: MessageTone, client: Client, loan: Loan, installment: 
 }
 
 export function CollectionsView({
-  clients, loans, settings, onOpenLoan, notify,
+  clients, loans, settings, onOpenLoan, onRegister, notify,
 }: {
   clients: Client[];
   loans: Loan[];
   settings: AppSettings;
   onOpenLoan: (id: string) => void;
+  onRegister?: (loanId: string, installmentId: string) => void;
   notify: (message: string) => void;
 }) {
   const [filter, setFilter] = useState<QueueFilter>('today');
@@ -126,7 +127,7 @@ export function CollectionsView({
             {([['friendly','Amigável'],['today','Vence hoje'],['late','Em atraso'],['firm','Mais firme']] as [MessageTone,string][]).map(([id,label]) => <button className={tone === id ? 'active' : ''} onClick={() => setTone(id)} key={id}>{label}</button>)}
           </div>
           <div className="message-preview"><div className="message-contact"><span className="avatar">{current.client.name.split(' ').slice(0,2).map(part => part[0]).join('')}</span><span><b>{current.client.name}</b><small>{current.loan.contractNumber} • Parcela {current.installment.number}</small></span></div><p>{currentMessage}</p><small>Modelo editável quando a integração do WhatsApp for conectada.</small></div>
-          <div className="composer-actions"><button className="secondary-button" onClick={() => onOpenLoan(current.loan.id)}>Ver contrato</button><button className="primary-button" onClick={copyMessage}>Copiar mensagem</button></div>
+          <div className="composer-actions"><button className="secondary-button" onClick={() => onOpenLoan(current.loan.id)}>Ver contrato</button>{onRegister && current.status !== 'Pago' && <button className="primary-button" onClick={() => onRegister(current.loan.id, current.installment.id)}>Registrar pagamento</button>}<button className="secondary-button" onClick={copyMessage}>Copiar mensagem</button></div>
         </> : <EmptyState title="Selecione uma cobrança" text="Escolha um cliente na fila para preparar a mensagem." />}
       </aside>
     </div>

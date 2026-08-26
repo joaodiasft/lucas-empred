@@ -26,7 +26,7 @@ function weekTitle(days: Date[]) {
   return `${start.getDate()} ${startMonth} – ${end.getDate()} ${endMonth} ${end.getFullYear()}`;
 }
 
-export function CalendarView({ clients, loans, onOpenLoan }: { clients: Client[]; loans: Loan[]; onOpenLoan: (id: string) => void }) {
+export function CalendarView({ clients, loans, onOpenLoan, onRegister }: { clients: Client[]; loans: Loan[]; onOpenLoan: (id: string) => void; onRegister?: (loanId: string, installmentId: string) => void }) {
   const today = new Date();
   const [anchor, setAnchor] = useState(() => new Date(today.getFullYear(), today.getMonth(), today.getDate()));
   const [mode, setMode] = useState<CalMode>('weekly');
@@ -178,17 +178,22 @@ export function CalendarView({ clients, loans, onOpenLoan }: { clients: Client[]
       </div>
       {selectedEvents.length ? <div className="agenda-list">
         {selectedEvents.map(event => (
-          <button type="button" key={event.item.id} className="agenda-row" onClick={() => onOpenLoan(event.loan.id)}>
-            <span className="cal-event-photo large">{event.client.photo ? <img src={event.client.photo} alt="" /> : initials(event.client.name)}</span>
-            <span>
-              <b>{event.client.name}</b>
-              <small>{event.loan.contractNumber} · Parcela {event.item.number}/{event.loan.weeks} · {frequencyLabel(loanFrequency(event.loan))}</small>
-            </span>
-            <span className="agenda-value">
-              <b>{currency(event.amount)}</b>
-              <StatusBadge status={event.status} />
-            </span>
-          </button>
+          <div className="agenda-item" key={event.item.id}>
+            <button type="button" className="agenda-row" onClick={() => onOpenLoan(event.loan.id)}>
+              <span className="cal-event-photo large">{event.client.photo ? <img src={event.client.photo} alt="" /> : initials(event.client.name)}</span>
+              <span>
+                <b>{event.client.name}</b>
+                <small>{event.loan.contractNumber} · Parcela {event.item.number}/{event.loan.weeks} · {frequencyLabel(loanFrequency(event.loan))}</small>
+              </span>
+              <span className="agenda-value">
+                <b>{currency(event.amount)}</b>
+                <StatusBadge status={event.status} />
+              </span>
+            </button>
+            {event.status !== 'Pago' && onRegister && (
+              <button type="button" className="primary-button small" onClick={() => onRegister(event.loan.id, event.item.id)}>Registrar</button>
+            )}
+          </div>
         ))}
       </div> : <EmptyState title="Nada neste dia" text="Não há parcela semanal nem mensal com vencimento nesta data." />}
     </section>
