@@ -2,7 +2,8 @@ export type Role = 'admin' | 'staff' | 'client';
 export type PayFrequency = 'daily' | 'weekly' | 'fortnightly' | 'monthly';
 export type LoanType = 'personal' | 'business' | 'emergency' | 'refinancing' | 'other';
 export type LoanCategory = 'cash' | 'vehicle' | 'home' | 'health' | 'education' | 'business' | 'other';
-export type LoanPlanMode = 'contract_total' | 'monthly_split' | 'fixed_installment';
+export type LoanPlanMode = 'contract_total' | 'monthly_split' | 'fixed_installment' | 'dual_stream';
+export type InstallmentKind = 'monthly' | 'weekly';
 export type PenaltyMode = 'none' | 'fixed_once' | 'percent_once' | 'fixed_daily' | 'percent_daily';
 export type Page = 'home' | 'clients' | 'new-client' | 'client-detail' | 'loans' | 'new-loan' | 'loan-detail' | 'payments' | 'calendar' | 'collections' | 'reports' | 'dashboard' | 'team' | 'settings' | 'client-home';
 export type PaymentMethod = 'cash' | 'pix' | 'transfer';
@@ -59,7 +60,7 @@ export interface AccessAccount {
 export interface Installment {
   id: string; number: number; dueDate: string; principal: number; interest: number;
   amount: number; paidAmount: number; status: InstallmentStatus; paidAt?: string; receiptName?: string;
-  paymentMethod?: PaymentMethod;
+  paymentMethod?: PaymentMethod; kind?: InstallmentKind;
 }
 export interface PaymentRecord {
   paidAmount: number;
@@ -73,7 +74,9 @@ export interface Loan {
   feeType: 'fixed' | 'percent'; feeValue: number; lateInterest: number; status: 'Ativo' | 'Quitado' | 'Renegociado';
   installments: Installment[]; createdAt: string; originalLoanId?: string;
   loanType?: LoanType; category?: LoanCategory; planMode?: LoanPlanMode; termMonths?: number;
-  fixedInstallment?: number; paymentWeekdays?: number[]; penaltyMode?: PenaltyMode; penaltyValue?: number;
+  fixedInstallment?: number; weeklyInterest?: number; weeklyAmount?: number; weeklyWeekday?: number;
+  paymentWeekdays?: number[]; penaltyMode?: PenaltyMode; penaltyValue?: number;
+  startDate?: string; endDate?: string; monthlyDueDay?: number;
 }
 export interface TeamMember { id: string; name: string; email: string; active: boolean; permissions: string[] }
 export interface AppSettings { companyName: string; document: string; phone: string; pixKey: string; defaultRate: number; defaultWeeks: number; defaultFrequency: PayFrequency; feeType: 'fixed' | 'percent'; feeValue: number; lateInterest: number; reminderDays: number }
@@ -268,6 +271,7 @@ export function loanCategoryLabel(value?: LoanCategory) {
 export function planModeLabel(value?: LoanPlanMode) {
   if (value === 'monthly_split') return 'Total mensal dividido no calendário';
   if (value === 'fixed_installment') return 'Parcela fixa por vencimento';
+  if (value === 'dual_stream') return 'Parcela mensal + pagamento semanal';
   return 'Total do contrato em parcelas';
 }
 
@@ -420,6 +424,187 @@ export function generateFlexibleInstallments(input: FlexibleScheduleInput): Inst
     return result.map((item, index) => ({ ...item, principal:principalParts[index], interest:roundCents(item.amount - principalParts[index]) }));
   }
   return result;
+}
+
+export function tenthOfNextMonth(from = new Date()) {
+  return toIsoDate(new Date(from.getFullYear(), from.getMonth() + 1, 10));
+}
+
+export function generateWeeklyInterestInstallments(input: {
+  principal: number;
+  weeklyInterest: number;
+  firstDueDate: string;
+  termMonths: number;
+}): Installment[] {
+  const dates = scheduleDates({
+    principal: input.principal,
+    rate: 0,
+    firstDueDate: input.firstDueDate,
+    frequency: 'weekly',
+    planMode: 'monthly_split',
+    installmentCount: 1,
+    termMonths: input.termMonths,
+    fixedInstallment: 0,
+  });
+  if (!dates.length) return [];
+  const weeklyInterest = Math.max(0, roundCents(input.weeklyInterest));
+  const principals = splitEqual(Math.max(0, roundCents(input.principal)), dates.length);
+  return dates.map((due, index) => {
+    const principal = principals[index];
+    return {
+      id: uid('parc'),
+      number: index + 1,
+      dueDate: toIsoDate(due),
+      principal,
+      interest: weeklyInterest,
+      amount: roundCents(principal + weeklyInterest),
+      paidAmount: 0,
+      status: 'Pendente' as const,
+    };
+  });
+}
+
+export const WEEKDAY_OPTIONS = [
+  { id: 1, short: 'Seg', label: 'Segunda-feira' },
+  { id: 2, short: 'Ter', label: 'Terça-feira' },
+  { id: 3, short: 'Qua', label: 'Quarta-feira' },
+  { id: 4, short: 'Qui', label: 'Quinta-feira' },
+  { id: 5, short: 'Sex', label: 'Sexta-feira' },
+  { id: 6, short: 'Sáb', label: 'Sábado' },
+  { id: 0, short: 'Dom', label: 'Domingo' },
+] as const;
+
+export function weekdayLabel(day?: number) {
+  return WEEKDAY_OPTIONS.find(item => item.id === day)?.label || '—';
+}
+
+export function installmentKindLabel(kind?: InstallmentKind) {
+  if (kind === 'monthly') return 'Mensal';
+  if (kind === 'weekly') return 'Semanal';
+  return 'Parcela';
+}
+
+export function isDualScheduleLoan(loan: Pick<Loan, 'planMode' | 'installments'>) {
+  return loan.planMode === 'dual_stream' || loan.installments.some(item => item.kind === 'monthly' || item.kind === 'weekly');
+}
+
+function dueOnDay(year: number, month: number, day: number) {
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  return new Date(year, month, Math.min(Math.max(1, day), lastDay), 12, 0, 0);
+}
+
+export function contractEndDate(startDate: string, termMonths: number) {
+  return toIsoDate(addMonthsClamped(parseIsoDate(startDate), Math.max(1, termMonths)));
+}
+
+function nextWeekdayAfter(start: Date, weekday: number) {
+  const cursor = addDays(start, 1);
+  while (cursor.getDay() !== weekday) cursor.setDate(cursor.getDate() + 1);
+  return cursor;
+}
+
+export interface DualScheduleInput {
+  principal: number;
+  startDate: string;
+  termMonths: number;
+  monthlyDueDay: number;
+  weeklyAmount: number;
+  weeklyWeekday: number;
+}
+
+export function generateDualSchedule(input: DualScheduleInput): Installment[] {
+  const principal = Math.max(0, roundCents(input.principal));
+  const months = Math.max(1, Math.min(60, Number(input.termMonths) || 1));
+  const dueDay = Math.max(1, Math.min(31, Number(input.monthlyDueDay) || 1));
+  const weeklyAmount = Math.max(0, roundCents(input.weeklyAmount));
+  const weekday = ((Number(input.weeklyWeekday) % 7) + 7) % 7;
+  const start = parseIsoDate(input.startDate);
+  const contractEnd = contractEndDate(input.startDate, months);
+  const principals = splitEqual(principal, months);
+
+  const monthly: Installment[] = [];
+  for (let index = 0; index < months; index += 1) {
+    const monthDate = new Date(start.getFullYear(), start.getMonth() + 1 + index, 1, 12, 0, 0);
+    const due = dueOnDay(monthDate.getFullYear(), monthDate.getMonth(), dueDay);
+    monthly.push({
+      id: uid('parc'),
+      number: 0,
+      dueDate: toIsoDate(due),
+      principal: principals[index],
+      interest: 0,
+      amount: principals[index],
+      paidAmount: 0,
+      status: 'Pendente',
+      kind: 'monthly',
+    });
+  }
+
+  const weekly: Installment[] = [];
+  let cursor = nextWeekdayAfter(start, weekday);
+  while (toIsoDate(cursor) <= contractEnd) {
+    weekly.push({
+      id: uid('parc'),
+      number: 0,
+      dueDate: toIsoDate(cursor),
+      principal: 0,
+      interest: weeklyAmount,
+      amount: weeklyAmount,
+      paidAmount: 0,
+      status: 'Pendente',
+      kind: 'weekly',
+    });
+    cursor = addDays(cursor, 7);
+  }
+
+  return [...monthly, ...weekly]
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || (a.kind === 'monthly' ? -1 : 1))
+    .map((item, index) => ({ ...item, number: index + 1 }));
+}
+
+export function displayEndDate(startDate: string, termMonths: number, installments: Installment[]) {
+  const contract = contractEndDate(startDate, termMonths);
+  return installments.reduce((max, item) => item.dueDate > max ? item.dueDate : max, contract);
+}
+
+export function dualScheduleSummary(loan: Pick<Loan, 'principal' | 'startDate' | 'termMonths' | 'monthlyDueDay' | 'weeklyAmount' | 'weeklyWeekday' | 'endDate' | 'installments'>) {
+  const monthly = loan.installments.filter(item => item.kind === 'monthly');
+  const weekly = loan.installments.filter(item => item.kind === 'weekly');
+  const live = loan.installments.map(item => ({ ...item, status: liveStatus(item) }));
+  const paid = live.filter(item => item.status === 'Pago');
+  const pending = live.filter(item => item.status !== 'Pago');
+  const late = live.filter(item => item.status === 'Atrasado');
+  const next = pending.slice().sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.number - b.number)[0];
+  const monthlyTotal = roundCents(monthly.reduce((sum, item) => sum + item.amount, 0));
+  const weeklyTotal = roundCents(weekly.reduce((sum, item) => sum + item.amount, 0));
+  const paidTotal = roundCents(paid.reduce((sum, item) => sum + item.paidAmount, 0));
+  const pendingTotal = roundCents(pending.reduce((sum, item) => sum + item.amount, 0));
+  return {
+    monthlyCount: monthly.length,
+    weeklyCount: weekly.length,
+    monthlyAmount: monthly[0]?.amount || 0,
+    monthlyTotal,
+    weeklyTotal,
+    grandTotal: roundCents(monthlyTotal + weeklyTotal),
+    paidTotal,
+    pendingTotal,
+    lateCount: late.length,
+    lateTotal: roundCents(late.reduce((sum, item) => sum + item.amount, 0)),
+    nextDue: next,
+    startDate: loan.startDate || loan.installments[0]?.dueDate || '',
+    endDate: loan.endDate || displayEndDate(loan.startDate || '', loan.termMonths || monthly.length || 1, loan.installments),
+  };
+}
+
+export function groupInstallmentsByDate(installments: Installment[]) {
+  const dates = [...new Set(installments.map(item => item.dueDate))].sort();
+  return dates.map(date => {
+    const rows = installments.filter(item => item.dueDate === date);
+    return {
+      date,
+      rows,
+      total: roundCents(rows.reduce((sum, item) => sum + item.amount, 0)),
+    };
+  });
 }
 
 export function installmentMonthKey(value: string) {

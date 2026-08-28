@@ -4,7 +4,7 @@
 
 import { useMemo, useState } from 'react';
 import { EmptyState, PageHeader, StatusBadge, SummaryCard } from './components';
-import { Client, Installment, Loan, currency, frequencyLabel, initials, liveStatus, loanFrequency, monthCells, parseIsoDate, payableAmount, shortDate, startOfWeek, toIsoDate, weekDays } from './lib';
+import { Client, Installment, Loan, currency, initials, liveStatus, loanFrequency, monthCells, parseIsoDate, payableAmount, shortDate, startOfWeek, toIsoDate, weekDays } from './lib';
 
 type CalMode = 'weekly' | 'monthly';
 type CalFilter = 'todos' | 'pendente' | 'atrasado' | 'pago';
@@ -55,8 +55,8 @@ export function CalendarView({ clients, loans, onOpenLoan, onRegister }: { clien
   const due = inView.filter(event => event.status !== 'Pago').reduce((sum, event) => sum + event.amount, 0);
   const paid = inView.filter(event => event.status === 'Pago').reduce((sum, event) => sum + event.item.paidAmount, 0);
   const late = inView.filter(event => event.status === 'Atrasado');
-  const weeklyCount = inView.filter(event => loanFrequency(event.loan) === 'weekly').length;
-  const monthlyCount = inView.filter(event => loanFrequency(event.loan) === 'monthly').length;
+  const weeklyCount = inView.filter(event => event.item.kind === 'weekly' || (!event.item.kind && loanFrequency(event.loan) === 'weekly')).length;
+  const monthlyCount = inView.filter(event => event.item.kind === 'monthly' || (!event.item.kind && loanFrequency(event.loan) === 'monthly')).length;
 
   const shift = (direction: number) => {
     const next = new Date(anchor);
@@ -136,7 +136,7 @@ export function CalendarView({ clients, loans, onOpenLoan, onRegister }: { clien
                     <span className="cal-event-photo">{event.client.photo ? <img src={event.client.photo} alt="" /> : initials(event.client.name)}</span>
                     <span>
                       <b>{event.client.name.split(' ')[0]} {event.client.name.split(' ').slice(-1)}</b>
-                      <small>Parc. {event.item.number} · {frequencyLabel(loanFrequency(event.loan))}</small>
+                      <small>{event.item.kind === 'monthly' ? 'Mensal' : event.item.kind === 'weekly' ? 'Semanal' : `Parc. ${event.item.number}`} · {currency(event.amount)}</small>
                     </span>
                     <strong>{currency(event.amount)}</strong>
                   </button>
@@ -174,7 +174,7 @@ export function CalendarView({ clients, loans, onOpenLoan, onRegister }: { clien
           <p className="eyebrow">{WEEKDAYS[(parseIsoDate(selected).getDay() + 6) % 7].toUpperCase()}</p>
           <h3>{shortDate(selected)}</h3>
         </div>
-        <span className="subtle-count">{selectedEvents.length} vencimento(s)</span>
+        <span className="subtle-count">{selectedEvents.length} vencimento(s){selectedEvents.length > 1 ? ` · total ${currency(selectedEvents.reduce((sum, event) => sum + event.amount, 0))}` : ''}</span>
       </div>
       {selectedEvents.length ? <div className="agenda-list">
         {selectedEvents.map(event => (
@@ -183,7 +183,7 @@ export function CalendarView({ clients, loans, onOpenLoan, onRegister }: { clien
               <span className="cal-event-photo large">{event.client.photo ? <img src={event.client.photo} alt="" /> : initials(event.client.name)}</span>
               <span>
                 <b>{event.client.name}</b>
-                <small>{event.loan.contractNumber} · Parcela {event.item.number}/{event.loan.weeks} · {frequencyLabel(loanFrequency(event.loan))}</small>
+                <small>{event.loan.contractNumber} · {event.item.kind === 'monthly' ? 'Mensal' : event.item.kind === 'weekly' ? 'Semanal' : `Parcela ${event.item.number}`} · {shortDate(event.item.dueDate)}</small>
               </span>
               <span className="agenda-value">
                 <b>{currency(event.amount)}</b>

@@ -27,7 +27,8 @@ function dueDistance(value: string) {
 function messageFor(tone: MessageTone, client: Client, loan: Loan, installment: Loan['installments'][number], settings: AppSettings) {
   const first = client.name.split(' ')[0];
   const amount = currency(payableAmount(loan, installment));
-  const base = `Parcela ${installment.number}/${loan.installments.length}, no valor de ${amount}.`;
+  const kind = installment.kind === 'monthly' ? 'parcela mensal' : installment.kind === 'weekly' ? 'pagamento semanal' : `parcela ${installment.number}/${loan.installments.length}`;
+  const base = `${kind}, no valor de ${amount}.`;
   if (tone === 'friendly') return `Olá, ${first}! Tudo bem? Passando para lembrar que sua ${base.toLowerCase()} vence em ${shortDate(installment.dueDate)}. A chave PIX é ${settings.pixKey}. Se precisar falar sobre o pagamento, estou à disposição.`;
   if (tone === 'today') return `Olá, ${first}! Sua ${base.toLowerCase()} vence hoje. Para facilitar, a chave PIX é ${settings.pixKey}. Depois do pagamento, envie o comprovante pelo aplicativo.`;
   if (tone === 'firm') return `Olá, ${first}. A ${base.toLowerCase()} continua pendente há ${daysLate(installment.dueDate)} dias. O valor informado já considera os encargos previstos no contrato. Entre em contato para regularizar ou conversar sobre uma solução.`;
