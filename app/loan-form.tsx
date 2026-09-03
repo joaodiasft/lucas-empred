@@ -47,13 +47,15 @@ export function NewLoanView({
   const rate = rateFromInterest(principal, weeklyAmount);
   const client = clients.find(item => item.id === clientId);
   const risk = client ? riskFor(client, loans, principal) : null;
-  const sampleLate = weeklyAmount && penaltyMode !== 'none'
-    ? penaltyMode === 'percent_daily'
-      ? roundCents(weeklyAmount + weeklyAmount * (penaltyValue / 100) * 5)
+  const sampleDays = 5;
+  const sampleFine = penaltyMode === 'none'
+    ? 0
+    : penaltyMode === 'percent_daily'
+      ? roundCents(weeklyAmount * (penaltyValue / 100) * sampleDays)
       : penaltyMode === 'fixed_once'
-        ? roundCents(weeklyAmount + penaltyValue)
-        : roundCents(weeklyAmount + penaltyValue * 5)
-    : weeklyAmount;
+        ? roundCents(penaltyValue)
+        : roundCents(penaltyValue * sampleDays);
+  const sampleLate = roundCents(weeklyAmount + sampleFine);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -137,7 +139,7 @@ export function NewLoanView({
           <span className="highlight"><small>Como funciona</small><b>Sem prazo</b><em>Continua enquanto estiver ativo</em></span>
         </div>
 
-        <SectionTitle number="2" title="Juros por atraso" text="Só entra se a parcela da semana vencer sem pagamento." />
+        <SectionTitle number="2" title="Juros por atraso" text="A multa entra por cima do pagamento semanal. Só cobra se a terça vencer sem pagamento." />
         <div className="penalty-options compact">
           {penalties.map(option => (
             <button type="button" key={option.id} className={penaltyMode === option.id ? 'active' : ''} onClick={() => setPenaltyMode(option.id)}>
@@ -159,8 +161,11 @@ export function NewLoanView({
             </FieldBlock>
             <div className="penalty-example">
               <small>Exemplo com 5 dias de atraso</small>
-              <b>{currency(sampleLate)}</b>
-              <p>Uma semana de {currency(weeklyAmount)} passa para este valor.</p>
+              <div className="penalty-stack">
+                <span><em>Pagamento semanal</em><b>{currency(weeklyAmount)}</b></span>
+                <span><em>Multa por cima</em><b>+ {currency(sampleFine)}</b></span>
+                <span className="total"><em>Total na terça atrasada</em><strong>{currency(sampleLate)}</strong></span>
+              </div>
             </div>
           </div>
         )}
