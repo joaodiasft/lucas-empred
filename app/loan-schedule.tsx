@@ -2,7 +2,7 @@
 
 import {
   DEFAULT_WEEKLY_WEEKDAY, Installment, Loan, buildThreeMonthForecast, currency, groupInstallmentsByDate,
-  installmentKindLabel, liveStatus, loanDailyAmount, payableAmount, parseIsoDate, shortDate, weekdayLabel,
+  installmentKindLabel, liveStatus, loanDailyAmount, payableAmount, parseIsoDate, roundCents, shortDate, weekdayLabel,
   weeklyFromDaily,
 } from './lib';
 
@@ -33,7 +33,7 @@ export function ThreeMonthForecast({
   const hasActions = Boolean(onRegister || onConfirm);
 
   if (!forecast.tuesdayCount) {
-    return <section className="monthly-schedule empty"><p>Informe o valor, a data de início e o juros de 1 dia para montar os 3 meses.</p></section>;
+    return <section className="monthly-schedule empty"><p>Informe o valor emprestado, a data de início e o juros por semana para montar os 3 meses.</p></section>;
   }
 
   return (
@@ -47,8 +47,7 @@ export function ThreeMonthForecast({
       </div>
       <div className="forecast-overview">
         <span><small>Valor emprestado</small><b>{currency(forecast.principal)}</b><em>Continua aberto nos 3 meses</em></span>
-        <span><small>Juros de 1 dia</small><b>{currency(forecast.dailyAmount)}</b><em>Não abate o principal</em></span>
-        <span><small>Cada terça</small><b>{currency(forecast.weeklyAmount)}</b><em>{currency(forecast.dailyAmount)} × 7 dias</em></span>
+        <span><small>Juros por semana</small><b>{currency(forecast.weeklyAmount)}</b><em>Toda terça-feira</em></span>
         <span><small>Juros dos 3 meses</small><b>{currency(forecast.tuesdayTotal)}</b><em>{forecast.tuesdayCount} terças</em></span>
         <span className="highlight"><small>No fim dos 3 meses</small><b>{currency(forecast.principal)}</b><em>Principal ainda em aberto + somatória {currency(forecast.tuesdayTotal)}</em></span>
       </div>
@@ -59,19 +58,16 @@ export function ThreeMonthForecast({
               <div>
                 <small>MÊS {index + 1} DE 3</small>
                 <h4>{month.label}</h4>
-                <p>{shortDate(month.from)} até {shortDate(month.to)} · {month.days} {month.days === 1 ? 'dia' : 'dias'} neste trecho</p>
+                <p>{shortDate(month.from)} até {shortDate(month.to)}</p>
               </div>
               <div className="month-metrics">
                 <span><small>Terças</small><b>{month.tuesdayCount}</b></span>
                 <span><small>Juros das terças</small><b>{currency(month.tuesdayTotal)}</b></span>
-                <span><small>Se contar os dias</small><b>{currency(month.dailyTotal)}</b></span>
                 <span className="month-total"><small>Somatória no fim do mês</small><b>{currency(month.runningTotal)}</b></span>
               </div>
             </header>
             <div className="month-math">
               Terças: {month.tuesdayCount} × {currency(forecast.weeklyAmount)} = <b>{currency(month.tuesdayTotal)}</b>
-              <i>·</i>
-              Por dias: {currency(forecast.dailyAmount)} × {month.days} = <b>{currency(month.dailyTotal)}</b>
               <i>·</i>
               Principal continua <b>{currency(month.principalDue)}</b>
             </div>
@@ -79,12 +75,13 @@ export function ThreeMonthForecast({
               {month.rows.length ? month.rows.map(item => {
                 const status = liveStatus(item);
                 const amount = loan ? payableAmount(loan, item) : item.amount;
+                const extra = loan ? roundCents(amount - item.amount) : 0;
                 return (
                   <div key={item.id}>
                     <span className="parcel-number">{String(item.number).padStart(2, '0')}</span>
                     <span><small>Vencimento</small><b>{shortDate(item.dueDate)}</b><em>{weekdayLabel(parseIsoDate(item.dueDate).getDay())}</em></span>
-                    <span><small>Conta da terça</small><b>{currency(dailyAmount)} × 7</b></span>
-                    <span><small>Juros da terça</small><b>{currency(amount)}</b></span>
+                    <span><small>Juros da terça</small><b>{currency(item.amount)}</b></span>
+                    <span><small>Atraso por cima</small><b>{extra > 0 ? `+ ${currency(extra)}` : '—'}</b></span>
                     <span><small>Somatória</small><b>{currency(item.runningTotal)}</b></span>
                     <span><small>Principal</small><b>{currency(month.principalDue)}</b></span>
                     <strong>

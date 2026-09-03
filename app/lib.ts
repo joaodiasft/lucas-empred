@@ -958,18 +958,21 @@ export function applyInstallmentPayment(loan: Loan, installmentId: string, payme
 
 export function payableAmount(loan: Loan, installment: Installment) {
   const lateDays = daysLate(installment.dueDate);
-  if (!lateDays || installment.status === 'Pago') return installment.amount;
+  const interest = isOpenWeeklyLoan(loan)
+    ? roundCents(installment.interest || loan.weeklyAmount || loan.weeklyInterest || installment.amount)
+    : installment.amount;
+  if (!lateDays || installment.status === 'Pago') return interest;
   if (loan.penaltyMode) {
     const value = Math.max(0, loan.penaltyValue || 0);
-    if (loan.penaltyMode === 'none') return installment.amount;
-    if (loan.penaltyMode === 'fixed_daily') return roundCents(installment.amount + value * lateDays);
-    if (loan.penaltyMode === 'percent_daily') return roundCents(installment.amount + installment.amount * (value / 100) * lateDays);
-    if (loan.penaltyMode === 'fixed_once') return roundCents(installment.amount + value);
-    return roundCents(installment.amount + installment.amount * (value / 100));
+    if (loan.penaltyMode === 'none') return interest;
+    if (loan.penaltyMode === 'fixed_daily') return roundCents(interest + value * lateDays);
+    if (loan.penaltyMode === 'percent_daily') return roundCents(interest + interest * (value / 100) * lateDays);
+    if (loan.penaltyMode === 'fixed_once') return roundCents(interest + value);
+    return roundCents(interest + interest * (value / 100));
   }
-  const fee = loan.feeType === 'fixed' ? loan.feeValue : installment.amount * (loan.feeValue / 100);
-  const mora = installment.amount * (loan.lateInterest / 100) * lateDays;
-  return installment.amount + fee + mora;
+  const fee = loan.feeType === 'fixed' ? loan.feeValue : interest * (loan.feeValue / 100);
+  const mora = interest * (loan.lateInterest / 100) * lateDays;
+  return roundCents(interest + fee + mora);
 }
 
 export function remainingPrincipal(loan: Pick<Loan, 'principal' | 'principalPaidAmount' | 'planMode'>) {
