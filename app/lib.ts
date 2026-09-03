@@ -77,6 +77,7 @@ export interface Loan {
   fixedInstallment?: number; weeklyInterest?: number; weeklyAmount?: number; weeklyWeekday?: number;
   paymentWeekdays?: number[]; penaltyMode?: PenaltyMode; penaltyValue?: number;
   startDate?: string; endDate?: string; monthlyDueDay?: number;
+  principalPaidAmount?: number; principalPaidAt?: string;
 }
 export interface TeamMember { id: string; name: string; email: string; active: boolean; permissions: string[] }
 export interface AppSettings { companyName: string; document: string; phone: string; pixKey: string; defaultRate: number; defaultWeeks: number; defaultFrequency: PayFrequency; feeType: 'fixed' | 'percent'; feeValue: number; lateInterest: number; reminderDays: number }
@@ -551,6 +552,7 @@ export function generateOpenWeeklyInstallments(input: {
 
 export function ensureOpenWeeklyInstallments(loan: Loan, asOf = new Date()): Loan {
   if (!isOpenWeeklyLoan(loan) || loan.status !== 'Ativo') return loan;
+  if (isPrincipalSettled(loan)) return loan;
   const until = weeklyHorizonDate(loan.startDate || loan.createdAt, asOf);
   const existing = new Set(loan.installments.map(item => item.dueDate));
   const generated = generateOpenWeeklyInstallments({
@@ -698,10 +700,11 @@ export function applyInstallmentPayment(loan: Loan, installmentId: string, payme
     receiptName: payment.receiptName || item.receiptName,
   } : item);
   const allPaid = installments.every(item => item.status === 'Pago');
+  const settled = allPaid && (!isOpenWeeklyLoan(loan) || isPrincipalSettled(loan));
   const updated: Loan = {
     ...loan,
     installments,
-    status: loan.status === 'Ativo' && allPaid && !isOpenWeeklyLoan(loan) ? 'Quitado' : loan.status,
+    status: loan.status === 'Ativo' && settled ? 'Quitado' : loan.status,
   };
   return ensureOpenWeeklyInstallments(updated);
 }
@@ -722,8 +725,63 @@ export function payableAmount(loan: Loan, installment: Installment) {
   return installment.amount + fee + mora;
 }
 
+export function remainingPrincipal(loan: Pick<Loan, 'principal' | 'principalPaidAmount' | 'planMode'>) {
+  if (!isOpenWeeklyLoan(loan)) return 0;
+  return roundCents(Math.max(0, loan.principal - (loan.principalPaidAmount || 0)));
+}
+
+export function isPrincipalSettled(loan: Pick<Loan, 'principal' | 'principalPaidAmount' | 'planMode'>) {
+  return remainingPrincipal(loan) <= 0.009;
+}
+
+export function applyPrincipalLumpPayment(loan: Loan, payment: PaymentRecord): Loan {
+  const due = remainingPrincipal(loan);
+  if (due <= 0) return loan;
+  if (roundCents(payment.paidAmount) + 0.009 < due) return loan;
+  const installments = loan.installments;
+  const weekliesDone = installments.every(item => item.status === 'Pago');
+  return {
+    ...loan,
+    principalPaidAmount: roundCents(loan.principal),
+    principalPaidAt: payment.paidAt,
+    status: weekliesDone ? 'Quitado' : loan.status,
+  };
+}
+
+export function loanLedger(loan: Loan) {
+  const paid = loan.installments.filter(item => item.status === 'Pago');
+  const pending = loan.installments.filter(item => item.status !== 'Pago');
+  const interestPaid = roundCents(paid.reduce((sum, item) => sum + item.paidAmount, 0));
+  const interestPending = roundCents(pending.reduce((sum, item) => sum + payableAmount(loan, item), 0));
+  const principalPaid = roundCents(loan.principalPaidAmount || 0);
+  const principalDue = isOpenWeeklyLoan(loan) ? remainingPrincipal(loan) : 0;
+  return {
+    principalDue,
+    principalPaid,
+    interestPaid,
+    interestPending,
+    receivedTotal: roundCents(interestPaid + principalPaid),
+    weeklyCount: paid.length,
+  };
+}
+
+export function clientLedger(clientId: string, loans: Loan[]) {
+  const mine = loans.filter(loan => loan.clientId === clientId);
+  return mine.reduce((acc, loan) => {
+    const row = loanLedger(loan);
+    acc.principalDue = roundCents(acc.principalDue + row.principalDue);
+    acc.principalPaid = roundCents(acc.principalPaid + row.principalPaid);
+    acc.interestPaid = roundCents(acc.interestPaid + row.interestPaid);
+    acc.interestPending = roundCents(acc.interestPending + row.interestPending);
+    acc.receivedTotal = roundCents(acc.receivedTotal + row.receivedTotal);
+    acc.weeklyCount += row.weeklyCount;
+    return acc;
+  }, { principalDue: 0, principalPaid: 0, interestPaid: 0, interestPending: 0, receivedTotal: 0, weeklyCount: 0 });
+}
+
 export function loanBalance(loan: Loan) {
-  return loan.installments.filter(item => item.status !== 'Pago').reduce((sum, item) => sum + payableAmount(loan, item), 0);
+  const weeklies = loan.installments.filter(item => item.status !== 'Pago').reduce((sum, item) => sum + payableAmount(loan, item), 0);
+  return roundCents(weeklies + remainingPrincipal(loan));
 }
 
 export function riskFor(client: Client, loans: Loan[], requested = 0): { score: number; level: RiskLevel; reasons: string[] } {

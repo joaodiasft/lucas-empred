@@ -3,7 +3,7 @@
 import { FormEvent, useMemo, useState } from 'react';
 import { FieldBlock, MoneyInput, PageHeader, RiskBadge } from './components';
 import {
-  AppSettings, Client, DEFAULT_WEEKLY_WEEKDAY, Loan, PenaltyMode, currency, dualScheduleSummary, formatRate,
+  AppSettings, Client, DEFAULT_WEEKLY_WEEKDAY, Loan, PenaltyMode, currency, dualScheduleSummary,
   generateOpenWeeklyInstallments, rateFromInterest, riskFor, roundCents, toIsoDate, uid,
 } from './lib';
 
@@ -93,7 +93,7 @@ export function NewLoanView({
     <>
       <PageHeader eyebrow="NOVA OPERAÇÃO" title="Novo empréstimo" subtitle="Empréstimo semanal, com vencimento toda terça-feira. Sem prazo fixo: a pessoa vai pagando enquanto o contrato estiver ativo." />
       <form className="form-card loan-form" onSubmit={submit}>
-        <SectionTitle number="1" title="Cliente, valor e pagamento semanal" text="O vencimento é toda terça-feira. Não tem prazo em meses nem em semanas. Novas terças entram sozinhas enquanto o empréstimo estiver ativo." />
+        <SectionTitle number="1" title="Cliente, valor e juros semanal" text="Os R$ 80 de toda terça são só juros. O valor emprestado só quita se for pago de uma vez. Cada juros registrado entra na somatória do cliente." />
 
         <div className="form-grid">
           <FieldBlock className="span-2" title="Cliente" hint="Quem recebe o empréstimo.">
@@ -101,13 +101,13 @@ export function NewLoanView({
               {clients.map(item => <option value={item.id} key={item.id}>{item.name} — {item.cpf}</option>)}
             </select>
           </FieldBlock>
-          <FieldBlock title="Valor emprestado" hint="O que você entrega ao cliente.">
+          <FieldBlock title="Valor emprestado" hint="Só quita se o cliente pagar esse valor de uma vez.">
             <MoneyInput value={principal} onChange={value => setPrincipal(Math.max(0, value))} required />
           </FieldBlock>
           <FieldBlock title="Data de início" hint="A primeira cobrança é na próxima terça depois desta data.">
             <input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} required />
           </FieldBlock>
-          <FieldBlock title="Pagamento semanal" hint="Valor fixo de toda terça-feira.">
+          <FieldBlock title="Juros por semana" hint="Somente juros. Não abate o valor emprestado.">
             <MoneyInput value={weeklyAmount} onChange={value => setWeeklyAmount(Math.max(0, value))} required />
           </FieldBlock>
           <FieldBlock className="span-2" title="Dia da semana do semanal" hint="Vencimento já definido: toda terça-feira.">
@@ -128,14 +128,12 @@ export function NewLoanView({
         )}
 
         <div className="loan-live-summary dual">
-          <span><small>Valor emprestado</small><b>{currency(principal)}</b><em>Registrado no contrato</em></span>
+          <span><small>Valor emprestado</small><b>{currency(principal)}</b><em>Só quita de uma vez</em></span>
           <span><small>Início</small><b>{startDate.split('-').reverse().join('/')}</b><em>Informado</em></span>
-          <span><small>Encerramento</small><b>Em aberto</b><em>Conforme os pagamentos</em></span>
-          <span><small>Pagamento semanal</small><b>{currency(weeklyAmount)}</b><em>Toda terça-feira</em></span>
-          <span><small>Próximas terças</small><b>{summary.weeklyCount}</b><em>O calendário segue sozinho</em></span>
-          <span><small>Já previsto nesta tela</small><b>{currency(summary.weeklyTotal)}</b><em>{formatRate(rate)}% da primeira semana</em></span>
-          <span><small>Próximo vencimento</small><b>{summary.nextDue ? summary.nextDue.dueDate.split('-').reverse().join('/') : '—'}</b><em>{currency(weeklyAmount)}</em></span>
-          <span className="highlight"><small>Como funciona</small><b>Sem prazo</b><em>Continua enquanto estiver ativo</em></span>
+          <span><small>Encerramento</small><b>Em aberto</b><em>Até quitar o principal</em></span>
+          <span><small>Juros por semana</small><b>{currency(weeklyAmount)}</b><em>Toda terça-feira</em></span>
+          <span><small>Somatória agora</small><b>{currency(0)}</b><em>Sobe a cada juros pago</em></span>
+          <span className="highlight"><small>Como quita</small><b>{currency(principal)}</b><em>Principal de uma vez + juros semanais</em></span>
         </div>
 
         <SectionTitle number="2" title="Juros por atraso" text="A multa entra por cima do pagamento semanal. Só cobra se a terça vencer sem pagamento." />
