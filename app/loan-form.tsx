@@ -2,7 +2,6 @@
 
 import { FormEvent, useMemo, useState } from 'react';
 import { FieldBlock, MoneyInput, PageHeader, RiskBadge } from './components';
-import { PaymentScheduleTable } from './loan-schedule';
 import {
   AppSettings, Client, DEFAULT_WEEKLY_WEEKDAY, Loan, PenaltyMode, currency, dualScheduleSummary, formatRate,
   generateOpenWeeklyInstallments, rateFromInterest, riskFor, roundCents, toIsoDate, uid,
@@ -169,9 +168,6 @@ export function NewLoanView({
             </div>
           </div>
         )}
-
-        <SectionTitle number="3" title="Próximos vencimentos" text="A tabela mostra as próximas terças. Enquanto o empréstimo estiver ativo, novas terças entram sozinhas." />
-        <PaymentScheduleTable installments={preview} />
 
         <div className="form-actions">
           <button type="button" className="secondary-button" onClick={onCancel}>Cancelar</button>
