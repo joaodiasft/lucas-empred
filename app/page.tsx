@@ -6,11 +6,11 @@ import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { CalendarView } from './calendar';
 import { CollectionsView } from './collections';
 import { ConfirmModal, EmptyState, FieldBlock, Modal, MoneyInput, PageHeader, RiskBadge, SignaturePad, StatusBadge, Stepper, SummaryCard, Toast } from './components';
-import { NewLoanView } from './loan-form';
+import { InterestCalcPanel, NewLoanView } from './loan-form';
 import { PaymentScheduleTable } from './loan-schedule';
 import { PaymentsView, RegisterPaymentModal } from './payments';
 import { ReportsView } from './reports';
-import { AccessAccount, AppSettings, Client, GeoLocation, Installment, Loan, Page, PayFrequency, PaymentRecord, Reference, Role, TeamMember, applyInstallmentPayment, applyPrincipalLumpPayment, callHref, clientLedger, compressImage, currency, daysLate, defaultSettings, digitsOnly, dualScheduleSummary, ensureOpenWeeklyInstallments, formatAddress, formatRate, frequencyLabel, generateInstallments, initials, isClientActive, isDualScheduleLoan, isOpenWeeklyLoan, loanBalance, loanFrequency, loanLedger, mapEmbedUrl, mapOpenUrl, payableAmount, periodLabel, persistGet, persistSet, rateFromInterest, referenceHref, remainingPrincipal, riskFor, roundCents, seedAccounts, seedClients, seedLoans, seedTeam, shortDate, uid, weekdayLabel, whatsappHref } from './lib';
+import { AccessAccount, AppSettings, Client, GeoLocation, Installment, Loan, Page, PayFrequency, PaymentRecord, Reference, Role, TeamMember, applyInstallmentPayment, applyPrincipalLumpPayment, callHref, clientLedger, compressImage, currency, daysLate, defaultSettings, digitsOnly, dualScheduleSummary, ensureOpenWeeklyInstallments, formatAddress, formatRate, frequencyLabel, generateInstallments, initials, isClientActive, isDualScheduleLoan, isOpenWeeklyLoan, loanBalance, loanDailyAmount, loanFrequency, loanLedger, mapEmbedUrl, mapOpenUrl, payableAmount, periodLabel, persistGet, persistSet, rateFromInterest, referenceHref, remainingPrincipal, riskFor, roundCents, seedAccounts, seedClients, seedLoans, seedTeam, shortDate, uid, weekdayLabel, weeklyFromDaily, whatsappHref } from './lib';
 
 function usePersistentState<T>(key: string, initial: T) {
   const [state, setState] = useState<T>(initial);
@@ -512,11 +512,13 @@ function LoanDetail({ loan, client, onContract, onRenegotiate, onConfirm, onRegi
   const openWeekly = isOpenWeeklyLoan(loan);
   const summary = dual ? dualScheduleSummary(loan) : null;
   const ledger = openWeekly ? loanLedger(loan) : null;
+  const dailyAmount = loanDailyAmount(loan);
+  const [calcDays, setCalcDays] = useState(7);
   const paid = loan.installments.filter(item => item.status === 'Pago');
   const progress = paid.length / Math.max(1, loan.installments.length) * 100;
   const late = loan.installments.filter(item => item.status === 'Atrasado');
   const subtitle = openWeekly
-    ? `Início ${shortDate(loan.startDate || loan.createdAt)} • Juros toda terça • Principal só quita de uma vez`
+    ? `Início ${shortDate(loan.startDate || loan.createdAt)} • 1 dia ${currency(dailyAmount)} • Terça ${currency(weeklyFromDaily(dailyAmount))} • Principal só quita de uma vez`
     : dual
       ? `Início ${shortDate(loan.startDate || loan.createdAt)} • Encerramento ${shortDate(summary?.endDate || loan.endDate || loan.createdAt)} • Mensal dia ${loan.monthlyDueDay} + ${weekdayLabel(loan.weeklyWeekday)}`
       : `Criado em ${shortDate(loan.createdAt)} • ${frequencyLabel(loanFrequency(loan))} • ${loan.interestMode === 'total' ? 'Juros fixos sobre o total' : 'Juros sobre saldo devedor'}`;
@@ -535,14 +537,19 @@ function LoanDetail({ loan, client, onContract, onRenegotiate, onConfirm, onRegi
       <div className="loan-stat"><small>Situação</small><StatusBadge status={loan.status} /></div>
     </section>
     {summary && openWeekly && ledger && (
-      <div className="loan-live-summary dual">
-        <span><small>Principal em aberto</small><b>{currency(ledger.principalDue)}</b><em>{ledger.principalDue > 0 ? 'Só quita de uma vez' : 'Principal quitado'}</em></span>
-        <span><small>Juros por semana</small><b>{currency(loan.weeklyAmount || 0)}</b><em>Toda terça-feira</em></span>
-        <span><small>Juros pagos</small><b>{currency(ledger.interestPaid)}</b><em>{ledger.weeklyCount} terça(s) na somatória</em></span>
-        <span><small>Juros pendentes</small><b>{currency(ledger.interestPending)}</b><em>Não abatem o principal</em></span>
-        <span><small>Atrasados</small><b>{currency(summary.lateTotal)}</b><em>{summary.lateCount} vencimento(s)</em></span>
-        <span className="highlight"><small>Somatória deste contrato</small><b>{currency(ledger.receivedTotal)}</b><em>Juros + principal já recebidos</em></span>
-      </div>
+      <>
+        <InterestCalcPanel principal={loan.principal} dailyAmount={dailyAmount} days={calcDays} startDate={loan.startDate || loan.createdAt} onDaysChange={setCalcDays} />
+        <div className="loan-live-summary dual">
+          <span><small>Principal em aberto</small><b>{currency(ledger.principalDue)}</b><em>{ledger.principalDue > 0 ? 'Só quita de uma vez' : 'Principal quitado'}</em></span>
+          <span><small>Juros de 1 dia</small><b>{currency(dailyAmount)}</b><em>{formatRate(rateFromInterest(loan.principal, dailyAmount))}% ao dia</em></span>
+          <span><small>Terça · 7 dias</small><b>{currency(weeklyFromDaily(dailyAmount))}</b><em>Cobrança semanal</em></span>
+          <span><small>Juros pagos</small><b>{currency(ledger.interestPaid)}</b><em>{ledger.weeklyCount} terça(s) na somatória</em></span>
+          <span><small>Juros pendentes</small><b>{currency(ledger.interestPending)}</b><em>Não abatem o principal</em></span>
+          <span><small>Atrasados</small><b>{currency(summary.lateTotal)}</b><em>{summary.lateCount} vencimento(s)</em></span>
+          <span><small>Saldo deste contrato</small><b>{currency(loanBalance(loan))}</b><em>Juros em aberto + principal</em></span>
+          <span className="highlight"><small>Somatória deste contrato</small><b>{currency(ledger.receivedTotal)}</b><em>Juros + principal já recebidos</em></span>
+        </div>
+      </>
     )}
     {summary && !openWeekly && (
       <div className="loan-live-summary dual">
@@ -590,10 +597,10 @@ function ClientHome({client,loans,settings,onPayment}:{client:Client;loans:Loan[
 
 function ContractModal({loan,client,settings,onClose}:{loan:Loan;client:Client;settings:AppSettings;onClose:()=>void}) {
   return <Modal title="Contrato digital" onClose={onClose} wide><div className="contract-toolbar"><span>Documento {loan.contractNumber}</span><button className="secondary-button" onClick={()=>window.print()}>Imprimir / salvar PDF</button></div><article className="contract-print"><header><div className="contract-logo"><span>L</span>Lucas <b>EMPRED</b></div><div><b>{loan.contractNumber}</b><small>Gerado em {shortDate(loan.createdAt)}</small></div></header><h1>CONTRATO PARTICULAR DE EMPRÉSTIMO</h1><p>Pelo presente instrumento, de um lado <b>{settings.companyName}</b>, inscrito sob {settings.document}, doravante CREDOR, e de outro <b>{client.name}</b>, CPF {client.cpf}, RG {client.rg}, residente em {client.address}, doravante DEVEDOR, acordam as condições abaixo.</p><h2>1. DO OBJETO E CONDIÇÕES</h2><p>O CREDOR entrega ao DEVEDOR a quantia de <b>{currency(loan.principal)}</b>. {isOpenWeeklyLoan(loan)
-    ? <>O DEVEDOR pagará juros de <b>{currency(loan.weeklyAmount || 0)}</b> <b>toda terça-feira</b>. Esse valor é somente juros e não abate o principal. O valor emprestado de <b>{currency(loan.principal)}</b> só será quitado se pago de uma vez. Cada juros recebido entra na somatória do cliente.</>
+    ? <>O DEVEDOR pagará juros de <b>{currency(loanDailyAmount(loan))}</b> por dia. Em 7 dias isso soma <b>{currency(weeklyFromDaily(loanDailyAmount(loan)))}</b>, cobrados <b>toda terça-feira</b>. Esse valor é somente juros e não abate o principal. O valor emprestado de <b>{currency(loan.principal)}</b> só será quitado se pago de uma vez. Cada juros recebido entra na somatória do cliente.</>
     : isDualScheduleLoan(loan)
     ? <>O valor emprestado será restituído em <b>{loan.termMonths} parcelas mensais de {currency(loan.installments.find(item => item.kind === 'monthly')?.amount || 0)}</b>, no dia <b>{loan.monthlyDueDay}</b> de cada mês, além de um pagamento semanal fixo de <b>{currency(loan.weeklyAmount || 0)}</b> toda <b>{weekdayLabel(loan.weeklyWeekday)}</b>, pelas datas reais do calendário, até <b>{shortDate(loan.endDate || loan.firstDueDate)}</b>.</>
-    : <>O valor será restituído em <b>{loan.weeks} parcelas {loanFrequency(loan)==='monthly'?'mensais':'semanais'}</b>, com taxa contratual de <b>{loan.rate}%</b>, na modalidade {loan.interestMode==='total'?'fixa sobre o valor total':'sobre o saldo devedor'}.</>}</p><div className="contract-values"><span><small>Principal</small><b>{currency(loan.principal)}</b></span><span><small>Total previsto</small><b>{currency(loan.installments.reduce((s,i)=>s+i.amount,0))}</b></span><span><small>1º vencimento</small><b>{shortDate(loan.firstDueDate)}</b></span></div><h2>2. DO ATRASO</h2><p>Em caso de atraso, incidirá multa {loan.feeType==='fixed'?`fixa de ${currency(loan.feeValue)}`:`de ${loan.feeValue}%`} por parcela, além de juros de mora de {loan.lateInterest}% ao dia.</p><h2>3. DOS PAGAMENTOS</h2><p>Os pagamentos serão realizados por PIX para a chave {settings.pixKey}, sujeitos à confirmação do CREDOR. O histórico mantido no sistema integra este contrato.</p><h2>4. DA CIÊNCIA</h2><p>As partes declaram compreender e aceitar as condições financeiras, o cronograma e as regras de renegociação vinculada ao saldo devedor.</p><div className="contract-signatures"><div>{client.signature?<img src={client.signature} alt="Assinatura do cliente"/>:<span/>}<b>{client.name}</b><small>Devedor</small></div><div><span className="admin-signature">Lucas EMPRED</span><b>{settings.companyName}</b><small>Credor</small></div></div></article></Modal>;
+    : <>O valor será restituído em <b>{loan.weeks} parcelas {loanFrequency(loan)==='monthly'?'mensais':'semanais'}</b>, com taxa contratual de <b>{loan.rate}%</b>, na modalidade {loan.interestMode==='total'?'fixa sobre o valor total':'sobre o saldo devedor'}.</>}</p><div className="contract-values"><span><small>Principal</small><b>{currency(loan.principal)}</b></span>{isOpenWeeklyLoan(loan)?<><span><small>Juros de 1 dia</small><b>{currency(loanDailyAmount(loan))}</b></span><span><small>7 dias · terça</small><b>{currency(weeklyFromDaily(loanDailyAmount(loan)))}</b></span></>:<span><small>Total previsto</small><b>{currency(loan.installments.reduce((s,i)=>s+i.amount,0))}</b></span>}<span><small>1º vencimento</small><b>{shortDate(loan.firstDueDate)}</b></span></div><h2>2. DO ATRASO</h2><p>Em caso de atraso, incidirá multa {loan.feeType==='fixed'?`fixa de ${currency(loan.feeValue)}`:`de ${loan.feeValue}%`} por parcela, além de juros de mora de {loan.lateInterest}% ao dia.</p><h2>3. DOS PAGAMENTOS</h2><p>Os pagamentos serão realizados por PIX para a chave {settings.pixKey}, sujeitos à confirmação do CREDOR. O histórico mantido no sistema integra este contrato.</p><h2>4. DA CIÊNCIA</h2><p>As partes declaram compreender e aceitar as condições financeiras, o cronograma e as regras de renegociação vinculada ao saldo devedor.</p><div className="contract-signatures"><div>{client.signature?<img src={client.signature} alt="Assinatura do cliente"/>:<span/>}<b>{client.name}</b><small>Devedor</small></div><div><span className="admin-signature">Lucas EMPRED</span><b>{settings.companyName}</b><small>Credor</small></div></div></article></Modal>;
 }
 
 function RenegotiateModal({loan,settings,onSave,onClose}:{loan:Loan;settings:AppSettings;onSave:(loan:Loan)=>void;onClose:()=>void}) {

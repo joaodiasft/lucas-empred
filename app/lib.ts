@@ -74,7 +74,7 @@ export interface Loan {
   feeType: 'fixed' | 'percent'; feeValue: number; lateInterest: number; status: 'Ativo' | 'Quitado' | 'Renegociado';
   installments: Installment[]; createdAt: string; originalLoanId?: string;
   loanType?: LoanType; category?: LoanCategory; planMode?: LoanPlanMode; termMonths?: number;
-  fixedInstallment?: number; weeklyInterest?: number; weeklyAmount?: number; weeklyWeekday?: number;
+  fixedInstallment?: number; weeklyInterest?: number; weeklyAmount?: number; dailyAmount?: number; weeklyWeekday?: number;
   paymentWeekdays?: number[]; penaltyMode?: PenaltyMode; penaltyValue?: number;
   startDate?: string; endDate?: string; monthlyDueDay?: number;
   principalPaidAmount?: number; principalPaidAt?: string;
@@ -303,6 +303,50 @@ export function rateFromInterest(principal: number, interest: number) {
 
 export function formatRate(rate: number) {
   return rate.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+export function dailyFromWeekly(weeklyAmount: number) {
+  return roundCents((Number(weeklyAmount) || 0) / 7);
+}
+
+export function weeklyFromDaily(dailyAmount: number) {
+  return roundCents((Number(dailyAmount) || 0) * 7);
+}
+
+export function loanDailyAmount(loan: Pick<Loan, 'dailyAmount' | 'weeklyAmount' | 'weeklyInterest'>) {
+  if (loan.dailyAmount != null && loan.dailyAmount >= 0) return roundCents(loan.dailyAmount);
+  return dailyFromWeekly(loan.weeklyAmount || loan.weeklyInterest || 0);
+}
+
+export function interestForDays(dailyAmount: number, days: number) {
+  const count = Math.max(0, Math.floor(Number(days) || 0));
+  return roundCents((Number(dailyAmount) || 0) * count);
+}
+
+export function daysSince(isoDate?: string) {
+  if (!isoDate) return 0;
+  const start = parseIsoDate(isoDate.slice(0, 10));
+  const todayDate = parseIsoDate(toIsoDate(new Date()));
+  return Math.max(0, Math.round((todayDate.getTime() - start.getTime()) / 86400000));
+}
+
+export function interestBreakdown(input: {
+  principal: number;
+  dailyAmount: number;
+  days: number;
+  startDate?: string;
+}) {
+  const daily = roundCents(Math.max(0, input.dailyAmount || 0));
+  const days = Math.max(0, Math.floor(Number(input.days) || 0));
+  const weekly = weeklyFromDaily(daily);
+  const forDays = interestForDays(daily, days);
+  const forMonth = interestForDays(daily, 30);
+  const elapsed = daysSince(input.startDate);
+  const accrued = interestForDays(daily, elapsed);
+  const dailyRate = rateFromInterest(input.principal, daily);
+  const weeklyRate = rateFromInterest(input.principal, weekly);
+  const daysRate = rateFromInterest(input.principal, forDays);
+  return { daily, days, weekly, forDays, forMonth, elapsed, accrued, dailyRate, weeklyRate, daysRate };
 }
 
 export function generateInstallments(input: Pick<Loan, 'principal' | 'rate' | 'interestMode' | 'weeks' | 'firstDueDate'> & { frequency?: PayFrequency; interestAmount?: number }): Installment[] {
