@@ -95,6 +95,19 @@ button { color:inherit; }
 .photo-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
 .file-button { position:relative; overflow:hidden; display:inline-flex; align-items:center; }
 .file-button input { position:absolute; inset:0; opacity:0; cursor:pointer; }
+.form-card.wide { max-width:980px; }
+.form-grid.is-disabled { opacity:.55; pointer-events:none; }
+.address-heading { margin:22px 0 12px; color:var(--navy); font-size:13px; }
+.same-place { margin:18px 0 8px; padding:12px 14px; border:1px solid #ead8aa; border-radius:12px; background:#fffdf6; }
+.document-slots { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.document-slot { display:grid; gap:6px; min-height:92px; padding:12px 14px; border:1.5px dashed #cbd2dc; border-radius:12px; background:#fafbfc; }
+.document-slot.filled { border-style:solid; border-color:#ead8aa; background:#fffdf6; }
+.document-slot label { display:grid; gap:4px; position:relative; cursor:pointer; }
+.document-slot input { position:absolute; inset:0; opacity:0; cursor:pointer; }
+.document-slot small { color:#9b7d29; font-size:10px; font-weight:800; }
+.document-slot b { color:var(--navy); font-size:12px; word-break:break-all; }
+.document-slot em { color:#8d96a4; font-size:11px; font-style:normal; }
+@media(max-width:900px){ .document-slots{grid-template-columns:1fr;} }
 .location-banner { display:flex; justify-content:space-between; gap:16px; align-items:center; padding:16px; margin-bottom:16px; border:1px solid #eadfb9; border-radius:13px; background:#fffdf5; }
 .location-banner b { display:block; color:var(--navy); font-size:13px; }
 .location-banner p { margin:4px 0 0; color:var(--muted); font-size:11px; }

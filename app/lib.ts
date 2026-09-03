@@ -23,13 +23,7 @@ export interface GeoLocation {
   accuracy?: number;
   capturedAt: string;
 }
-export interface Client {
-  id: string;
-  name: string;
-  cpf: string;
-  rg: string;
-  phone: string;
-  address: string;
+export interface AddressFields {
   zip: string;
   street: string;
   number: string;
@@ -37,16 +31,42 @@ export interface Client {
   neighborhood: string;
   city: string;
   state: string;
+}
+export interface AttachedDocument {
+  label: string;
+  fileName: string;
+}
+export interface Client extends AddressFields {
+  id: string;
+  name: string;
+  cpf: string;
+  rg: string;
+  phone: string;
+  address: string;
   income: number;
+  birthDate?: string;
+  motherName?: string;
+  email?: string;
+  occupation?: string;
   photo?: string;
   location?: GeoLocation | null;
   locationConsent: boolean;
   accessPin: string;
   references: Reference[];
-  documents: string[];
+  documents: Array<string | AttachedDocument>;
   signature?: string;
   createdAt: string;
   active: boolean;
+  sameAsHome?: boolean;
+  businessName?: string;
+  businessZip?: string;
+  businessStreet?: string;
+  businessNumber?: string;
+  businessComplement?: string;
+  businessNeighborhood?: string;
+  businessCity?: string;
+  businessState?: string;
+  businessAddress?: string;
 }
 export interface AccessAccount {
   id: string;
@@ -98,6 +118,86 @@ export function digitsOnly(value: string) {
   return (value || '').replace(/\D/g, '');
 }
 
+export function formatCpf(value: string) {
+  const digits = digitsOnly(value).slice(0, 11);
+  return digits
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
+}
+
+export function formatCep(value: string) {
+  const digits = digitsOnly(value).slice(0, 8);
+  return digits.replace(/(\d{5})(\d)/, '$1-$2');
+}
+
+export function formatPhone(value: string) {
+  const digits = digitsOnly(value).slice(0, 11);
+  if (digits.length <= 10) {
+    return digits.replace(/(\d{2})(\d)/, '($1) $2').replace(/(\d{4})(\d)/, '$1-$2');
+  }
+  return digits.replace(/(\d{2})(\d)/, '($1) $2').replace(/(\d{5})(\d)/, '$1-$2');
+}
+
+export function formatRg(value: string) {
+  return value.replace(/[^\dA-Za-z.\-]/g, '').slice(0, 20);
+}
+
+export const CLIENT_DOCUMENT_SLOTS = [
+  'RG (frente)',
+  'RG (verso)',
+  'CPF',
+  'CNH',
+  'Comprovante de residência',
+  'Comprovante de renda',
+  'Foto do comércio',
+  'Comprovante do comércio',
+  'Selfie com documento',
+  'Outro documento',
+] as const;
+
+export function listedDocuments(docs?: Array<string | AttachedDocument>) {
+  return (docs || []).map(item => typeof item === 'string' ? { label: 'Documento', fileName: item } : item).filter(item => item.fileName);
+}
+
+export function emptyAddress(): AddressFields {
+  return { zip: '', street: '', number: '', complement: '', neighborhood: '', city: '', state: '' };
+}
+
+export function businessAddressFrom(client: Client): AddressFields {
+  if (client.sameAsHome) {
+    return { zip: client.zip, street: client.street, number: client.number, complement: client.complement, neighborhood: client.neighborhood, city: client.city, state: client.state };
+  }
+  return {
+    zip: client.businessZip || '',
+    street: client.businessStreet || '',
+    number: client.businessNumber || '',
+    complement: client.businessComplement || '',
+    neighborhood: client.businessNeighborhood || '',
+    city: client.businessCity || '',
+    state: client.businessState || '',
+  };
+}
+
+export async function lookupCep(cep: string): Promise<Partial<AddressFields> | null> {
+  const digits = digitsOnly(cep);
+  if (digits.length !== 8) return null;
+  try {
+    const response = await fetch(`https://viacep.com.br/ws/${digits}/json/`);
+    const data = await response.json() as { erro?: boolean; logradouro?: string; complemento?: string; bairro?: string; localidade?: string; uf?: string };
+    if (!data || data.erro) return null;
+    return {
+      street: data.logradouro || '',
+      complement: data.complemento || '',
+      neighborhood: data.bairro || '',
+      city: data.localidade || '',
+      state: data.uf || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function brPhoneDigits(phone: string) {
   const digits = digitsOnly(phone);
   if (digits.startsWith('55') && digits.length >= 12) return digits;
@@ -116,7 +216,7 @@ export function referenceHref(ref: Pick<Reference, 'phone' | 'hasWhatsapp'>) {
   return ref.hasWhatsapp ? whatsappHref(ref.phone) : callHref(ref.phone);
 }
 
-export function formatAddress(parts: Pick<Client, 'street' | 'number' | 'complement' | 'neighborhood' | 'city' | 'state' | 'zip'>) {
+export function formatAddress(parts: AddressFields) {
   const line = [parts.street, parts.number].filter(Boolean).join(', ');
   const extra = [parts.complement, parts.neighborhood].filter(Boolean).join(' — ');
   const city = [parts.city, parts.state].filter(Boolean).join('/');

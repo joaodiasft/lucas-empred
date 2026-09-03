@@ -4,13 +4,14 @@
 
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { CalendarView } from './calendar';
+import { NewClientView } from './client-form';
 import { CollectionsView } from './collections';
-import { ConfirmModal, EmptyState, FieldBlock, Modal, MoneyInput, PageHeader, RiskBadge, SignaturePad, StatusBadge, Stepper, SummaryCard, Toast } from './components';
+import { ConfirmModal, EmptyState, FieldBlock, Modal, MoneyInput, PageHeader, RiskBadge, StatusBadge, SummaryCard, Toast } from './components';
 import { InterestCalcPanel, NewLoanView } from './loan-form';
 import { PaymentScheduleTable, ThreeMonthForecast, loanForecastProps } from './loan-schedule';
 import { PaymentsView, RegisterPaymentModal } from './payments';
 import { ReportsView } from './reports';
-import { AccessAccount, AppSettings, Client, GeoLocation, Installment, Loan, Page, PayFrequency, PaymentRecord, Reference, Role, TeamMember, applyInstallmentPayment, applyPrincipalLumpPayment, callHref, clientLedger, compressImage, currency, daysLate, defaultSettings, digitsOnly, dualScheduleSummary, ensureOpenWeeklyInstallments, formatAddress, formatRate, frequencyLabel, generateInstallments, initials, isClientActive, isDualScheduleLoan, isOpenWeeklyLoan, loanBalance, loanDailyAmount, loanFrequency, loanLedger, mapEmbedUrl, mapOpenUrl, payableAmount, periodLabel, persistGet, persistSet, rateFromInterest, referenceHref, remainingPrincipal, riskFor, roundCents, seedAccounts, seedClients, seedLoans, seedTeam, shortDate, uid, weekdayLabel, weeklyFromDaily, whatsappHref } from './lib';
+import { AccessAccount, AppSettings, Client, Installment, Loan, Page, PayFrequency, PaymentRecord, Reference, Role, TeamMember, applyInstallmentPayment, applyPrincipalLumpPayment, callHref, clientLedger, currency, daysLate, defaultSettings, digitsOnly, dualScheduleSummary, ensureOpenWeeklyInstallments, formatRate, frequencyLabel, generateInstallments, initials, isClientActive, isDualScheduleLoan, isOpenWeeklyLoan, listedDocuments, loanBalance, loanDailyAmount, loanFrequency, loanLedger, mapEmbedUrl, mapOpenUrl, payableAmount, periodLabel, persistGet, persistSet, rateFromInterest, referenceHref, remainingPrincipal, riskFor, roundCents, seedAccounts, seedClients, seedLoans, seedTeam, shortDate, uid, weekdayLabel, weeklyFromDaily, whatsappHref } from './lib';
 
 function usePersistentState<T>(key: string, initial: T) {
   const [state, setState] = useState<T>(initial);
@@ -362,144 +363,9 @@ function ClientsView({ clients, loans, onOpen, onNew, onInactivate, onReactivate
   </>;
 }
 
-function emptyRef(): { name: string; phone: string; relation: string; hasWhatsapp: boolean } {
-  return { name: '', phone: '', relation: '', hasWhatsapp: true };
-}
-
-function NewClientView({ onSave, onCancel }: { onSave:(client:Client)=>void; onCancel:()=>void }) {
-  const [step, setStep] = useState(0);
-  const [signature, setSignature] = useState('');
-  const [documents, setDocuments] = useState<string[]>([]);
-  const [photo, setPhoto] = useState('');
-  const [photoBusy, setPhotoBusy] = useState(false);
-  const [geoStatus, setGeoStatus] = useState<'idle' | 'loading' | 'granted' | 'denied'>('idle');
-  const [location, setLocation] = useState<GeoLocation | null>(null);
-  const [form, setForm] = useState({
-    name: '', cpf: '', rg: '', phone: '', income: 0,
-    zip: '', street: '', number: '', complement: '', neighborhood: '', city: '', state: '',
-  });
-  const [refs, setRefs] = useState([emptyRef(), emptyRef(), emptyRef()]);
-  const update = (key: string, value: string | number) => setForm(state => ({ ...state, [key]: value }));
-  const updateRef = (index: number, key: string, value: string | boolean) => setRefs(items => items.map((item, i) => i === index ? { ...item, [key]: value } : item));
-
-  const capturePhoto = async (file?: File) => {
-    if (!file) return;
-    setPhotoBusy(true);
-    try { setPhoto(await compressImage(file)); } finally { setPhotoBusy(false); }
-  };
-
-  const requestLocation = () => {
-    if (!navigator.geolocation) { setGeoStatus('denied'); return; }
-    setGeoStatus('loading');
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      const next = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, capturedAt: new Date().toISOString() };
-      setLocation(next);
-      setGeoStatus('granted');
-      try {
-        const response = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${next.lat}&longitude=${next.lng}&localityLanguage=pt`);
-        const data = await response.json() as { postcode?: string; city?: string; locality?: string; principalSubdivisionCode?: string; principalSubdivision?: string; localityInfo?: { administrative?: { name: string; adminLevel: number }[] } };
-        const neighborhood = data.localityInfo?.administrative?.find(item => item.adminLevel === 8)?.name || data.locality || '';
-        setForm(state => ({
-          ...state,
-          zip: data.postcode || state.zip,
-          city: data.city || data.locality || state.city,
-          state: (data.principalSubdivisionCode || data.principalSubdivision || state.state).replace('BR-', ''),
-          neighborhood: neighborhood || state.neighborhood,
-        }));
-      } catch { /* keep coordinates even if reverse geocode fails */ }
-    }, () => setGeoStatus('denied'), { enableHighAccuracy: true, timeout: 14000 });
-  };
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (step === 1 && !photo) return;
-    if (step < 3) { setStep(value => value + 1); return; }
-    const address = formatAddress(form);
-    const pin = digitsOnly(form.phone).slice(-4) || '2026';
-    const references: Reference[] = refs.map(item => ({ ...item, validated: false }));
-    onSave({
-      id: uid('cli'), name: form.name, cpf: form.cpf, rg: form.rg, phone: form.phone, income: form.income,
-      zip: form.zip, street: form.street, number: form.number, complement: form.complement, neighborhood: form.neighborhood, city: form.city, state: form.state,
-      address, photo, location, locationConsent: geoStatus === 'granted', accessPin: pin, references, documents, signature,
-      createdAt: new Date().toISOString().slice(0, 10), active: true,
-    });
-  };
-
-  return <>
-    <PageHeader eyebrow="CADASTRO DO ADMINISTRADOR" title="Cadastrar cliente" subtitle="Comece pelo endereço. A foto do cliente e as três referências ficam salvas neste aparelho." />
-    <Stepper steps={['Endereço e localização', 'Dados e foto', '3 referências', 'Documentos']} active={step} />
-    <form className="form-card" onSubmit={submit}>
-      {step === 0 && <>
-        <div className="form-section-title"><span>1</span><div><h3>Endereço e localização</h3><p>O endereço é obrigatório. A localização no mapa só entra se a pessoa permitir.</p></div></div>
-        <div className="location-banner">
-          <div><b>Usar a localização do celular?</b><p>{geoStatus === 'granted' ? 'Localização salva e visível no mapa da ficha.' : geoStatus === 'denied' ? 'Permissão recusada. Continue só com o endereço digitado.' : 'Peça autorização e capture o ponto no mapa, se a pessoa aceitar.'}</p></div>
-          <button type="button" className="outline-button" onClick={requestLocation} disabled={geoStatus === 'loading'}>{geoStatus === 'loading' ? 'Capturando…' : geoStatus === 'granted' ? 'Atualizar GPS' : 'Permitir localização'}</button>
-        </div>
-        {location && <iframe className="map-frame" title="Localização do cliente" src={mapEmbedUrl(location)} />}
-        <div className="form-grid">
-          <label>CEP<input required value={form.zip} onChange={e => update('zip', e.target.value)} placeholder="00000-000" /></label>
-          <label>UF<input required maxLength={2} value={form.state} onChange={e => update('state', e.target.value.toUpperCase())} placeholder="SP" /></label>
-          <label className="span-2">Rua / avenida<input required value={form.street} onChange={e => update('street', e.target.value)} placeholder="Nome da via" /></label>
-          <label>Número<input required value={form.number} onChange={e => update('number', e.target.value)} placeholder="Nº" /></label>
-          <label>Complemento<input value={form.complement} onChange={e => update('complement', e.target.value)} placeholder="Apto, casa, bloco" /></label>
-          <label>Bairro<input required value={form.neighborhood} onChange={e => update('neighborhood', e.target.value)} /></label>
-          <label>Cidade<input required value={form.city} onChange={e => update('city', e.target.value)} /></label>
-        </div>
-      </>}
-      {step === 1 && <>
-        <div className="form-section-title"><span>2</span><div><h3>Foto e dados do cliente</h3><p>Anexe a foto da própria pessoa. Ela fica salva na ficha.</p></div></div>
-        <div className="photo-capture">
-          {photo ? <img src={photo} alt="Foto do cliente" /> : <span className="photo-placeholder">{photoBusy ? '…' : 'Foto'}</span>}
-          <div>
-            <b>Foto do cliente</b>
-            <p>Use a câmera frontal ou escolha uma imagem nítida do rosto.</p>
-            <div className="photo-actions">
-              <label className="primary-button file-button">Tirar / escolher foto<input required={!photo} type="file" accept="image/*" capture="user" onChange={event => void capturePhoto(event.target.files?.[0])} /></label>
-              {photo && <button type="button" className="secondary-button" onClick={() => setPhoto('')}>Trocar foto</button>}
-            </div>
-          </div>
-        </div>
-        <div className="form-grid">
-          <label className="span-2">Nome completo<input required value={form.name} onChange={e => update('name', e.target.value)} placeholder="Nome sem abreviações" /></label>
-          <label>CPF<input required value={form.cpf} onChange={e => update('cpf', e.target.value)} placeholder="000.000.000-00" /></label>
-          <label>RG<input required value={form.rg} onChange={e => update('rg', e.target.value)} /></label>
-          <label>Telefone / WhatsApp<input required value={form.phone} onChange={e => update('phone', e.target.value)} placeholder="(00) 00000-0000" /></label>
-          <label>Renda mensal<MoneyInput value={form.income} onChange={value => update('income', value)} required /></label>
-        </div>
-      </>}
-      {step === 2 && <>
-        <div className="form-section-title"><span>3</span><div><h3>Três referências de contato</h3><p>Se tiver WhatsApp, o botão abre a conversa. Se não tiver, o botão liga.</p></div></div>
-        <div className="reference-grid three">
-          {refs.map((item, index) => (
-            <div key={index}>
-              <h4>Referência {index + 1}</h4>
-              <label>Nome<input required value={item.name} onChange={e => updateRef(index, 'name', e.target.value)} /></label>
-              <label>Parentesco / relação<input required value={item.relation} onChange={e => updateRef(index, 'relation', e.target.value)} placeholder="Mãe, amigo, trabalho" /></label>
-              <label>Telefone<input required value={item.phone} onChange={e => updateRef(index, 'phone', e.target.value)} placeholder="(00) 00000-0000" /></label>
-              <label className="toggle-line"><input type="checkbox" checked={item.hasWhatsapp} onChange={e => updateRef(index, 'hasWhatsapp', e.target.checked)} /><span>Tem WhatsApp. Se desmarcar, o contato vira ligação.</span></label>
-            </div>
-          ))}
-        </div>
-      </>}
-      {step === 3 && <>
-        <div className="form-section-title"><span>4</span><div><h3>Documentos e assinatura</h3><p>Comprovantes extras e a assinatura digital, se já puder coletar.</p></div></div>
-        <label className="upload-zone"><input type="file" multiple accept="image/*,.pdf" onChange={event => setDocuments(Array.from(event.target.files || []).map(file => file.name))} /><span>↑</span><b>Toque para selecionar arquivos</b><small>Fotos ou PDF do comprovante e documento</small></label>
-        {documents.length > 0 && <div className="file-list">{documents.map(file => <span key={file}>▤ {file}</span>)}</div>}
-        <label className="standalone-label">Assinatura digital</label>
-        <SignaturePad value={signature} onChange={setSignature} />
-        <p className="save-note">Ao salvar, a foto, o endereço, o GPS (se permitido) e as 3 referências ficam gravados neste aparelho, inclusive no PIN de acesso do cliente (4 últimos dígitos do telefone).</p>
-      </>}
-      <div className="form-actions">
-        <button type="button" className="secondary-button" onClick={step ? () => setStep(value => value - 1) : onCancel}>{step ? 'Voltar' : 'Cancelar'}</button>
-        <button className="primary-button">{step === 3 ? 'Salvar cliente' : 'Continuar →'}</button>
-      </div>
-    </form>
-  </>;
-}
-
 function ClientDetail({ client, loans, onOpenLoan, onNewLoan, onValidateReference, onInactivate, onReactivate }: {client:Client;loans:Loan[];onOpenLoan:(id:string)=>void;onNewLoan:()=>void;onValidateReference:(index:number)=>void;onInactivate:()=>void;onReactivate:()=>void}) {
   const clientLoans=loans.filter(loan=>loan.clientId===client.id);const risk=riskFor(client,loans);
-  return <><PageHeader eyebrow="FICHA DO CLIENTE" title={client.name} subtitle={`${client.cpf} • ${isClientActive(client) ? 'Ativo' : 'Inativo'} • desde ${shortDate(client.createdAt)}`} action={<><button className={isClientActive(client) ? 'danger-button' : 'secondary-button'} onClick={isClientActive(client) ? onInactivate : onReactivate}>{isClientActive(client) ? 'Inativar cliente' : 'Reativar cliente'}</button>{isClientActive(client) && <button className="primary-button" onClick={onNewLoan}>＋ Novo empréstimo</button>}</>}/><div className="detail-grid"><section className="profile-card panel"><div className="client-hero"><PersonPhoto name={client.name} photo={client.photo} size="lg" /><div><h3>{client.name}</h3><p>{client.phone}</p><div className="hero-actions"><a className="wa-button" href={whatsappHref(client.phone)} target="_blank" rel="noreferrer">WhatsApp do cliente</a><a className="call-button" href={callHref(client.phone)}>Ligar</a></div></div></div><dl><div><dt>RG</dt><dd>{client.rg}</dd></div><div><dt>Renda declarada</dt><dd>{currency(client.income)}</dd></div><div className="span-2"><dt>Endereço</dt><dd>{client.address}</dd></div><div className="span-2"><dt>Acesso do cliente</dt><dd>CPF · PIN {client.accessPin}</dd></div></dl>{client.location ? <div className="map-block"><iframe title="Localização" src={mapEmbedUrl(client.location)} /><a href={mapOpenUrl(client.location)} target="_blank" rel="noreferrer">Abrir mapa</a></div> : <p className="muted-note">{client.locationConsent ? 'Localização não capturada.' : 'A pessoa não permitiu a localização. O endereço digitado permanece salvo.'}</p>}</section><section className="risk-card panel"><div className="risk-score"><div className={`score-ring ${risk.level==='Baixo risco'?'low':risk.level==='Médio risco'?'medium':'high'}`} style={{'--score':`${risk.score*3.6}deg`} as React.CSSProperties}><span>{risk.score}<small>/100</small></span></div><div><p className="eyebrow">ANÁLISE AUTOMÁTICA</p><h3>{risk.level}</h3><p>{risk.level==='Baixo risco'?'Perfil recomendado para análise de crédito.':'Revise os fatores antes de aprovar.'}</p></div></div><ul>{risk.reasons.slice(0,3).map(reason=><li key={reason}>✓ {reason}</li>)}</ul></section></div><section className="summary-grid three"><SummaryCard label="Principal em aberto" value={currency(clientLedger(client.id,loans).principalDue)} detail="Só quita se pagar de uma vez"/><SummaryCard label="Juros recebidos" value={currency(clientLedger(client.id,loans).interestPaid)} detail={`${clientLedger(client.id,loans).weeklyCount} pagamentos semanais`} tone="green"/><SummaryCard label="Somatória do cliente" value={currency(clientLedger(client.id,loans).receivedTotal)} detail="Juros + principal já pagos" tone="gold"/></section><div className="detail-grid"><section className="panel"><div className="panel-head"><h3>Empréstimos</h3></div>{clientLoans.length?<div className="compact-list">{clientLoans.map(loan=><button key={loan.id} onClick={()=>onOpenLoan(loan.id)}><span><b>{loan.contractNumber}</b><small>{currency(loan.principal)} • {loan.weeks} semanas</small></span><StatusBadge status={loan.status}/><strong>{currency(loanBalance(loan))}</strong><i>›</i></button>)}</div>:<EmptyState title="Sem empréstimos" text="Este cliente ainda não possui contratos."/>}</section><section className="panel"><div className="panel-head"><h3>Referências pessoais</h3><span className="subtle-count">{client.references.filter(ref=>ref.validated).length}/{client.references.length} validadas</span></div><div className="reference-list">{client.references.map((ref,index)=><div key={`${ref.name}-${index}`}><span className="avatar light">{initials(ref.name)}</span><span><b>{ref.name}</b><small>{ref.relation} • {ref.phone}</small></span><a className={ref.hasWhatsapp ? 'wa-button compact' : 'call-button compact'} href={referenceHref(ref)} target={ref.hasWhatsapp ? '_blank' : undefined} rel="noreferrer">{ref.hasWhatsapp ? 'WhatsApp' : 'Ligar'}</a>{ref.validated?<span className="verified">✓ Validada</span>:<button className="outline-button small" onClick={()=>onValidateReference(index)}>Validar</button>}</div>)}</div><div className="document-list"><h4>Documentos</h4>{client.documents.length?client.documents.map(file=><button key={file}>▤ {file}<span>Visualizar</span></button>):<p>Nenhum documento anexado.</p>}</div></section></div></>;
+  return <><PageHeader eyebrow="FICHA DO CLIENTE" title={client.name} subtitle={`${client.cpf} • ${isClientActive(client) ? 'Ativo' : 'Inativo'} • desde ${shortDate(client.createdAt)}`} action={<><button className={isClientActive(client) ? 'danger-button' : 'secondary-button'} onClick={isClientActive(client) ? onInactivate : onReactivate}>{isClientActive(client) ? 'Inativar cliente' : 'Reativar cliente'}</button>{isClientActive(client) && <button className="primary-button" onClick={onNewLoan}>＋ Novo empréstimo</button>}</>}/><div className="detail-grid"><section className="profile-card panel"><div className="client-hero"><PersonPhoto name={client.name} photo={client.photo} size="lg" /><div><h3>{client.name}</h3><p>{client.phone}</p><div className="hero-actions"><a className="wa-button" href={whatsappHref(client.phone)} target="_blank" rel="noreferrer">WhatsApp do cliente</a><a className="call-button" href={callHref(client.phone)}>Ligar</a></div></div></div><dl><div><dt>RG</dt><dd>{client.rg || '—'}</dd></div><div><dt>Renda declarada</dt><dd>{currency(client.income)}</dd></div>{client.birthDate?<div><dt>Nascimento</dt><dd>{shortDate(client.birthDate)}</dd></div>:null}{client.occupation?<div><dt>Ocupação</dt><dd>{client.occupation}</dd></div>:null}{client.motherName?<div className="span-2"><dt>Nome da mãe</dt><dd>{client.motherName}</dd></div>:null}{client.email?<div className="span-2"><dt>E-mail</dt><dd>{client.email}</dd></div>:null}<div className="span-2"><dt>Endereço da casa</dt><dd>{client.address || '—'}</dd></div><div className="span-2"><dt>Endereço do comércio</dt><dd>{client.sameAsHome ? `Mesmo local da casa${client.businessName ? ` · ${client.businessName}` : ''}` : (client.businessAddress || client.businessName || '—')}</dd></div><div className="span-2"><dt>Acesso do cliente</dt><dd>CPF · PIN {client.accessPin}</dd></div></dl>{client.location ? <div className="map-block"><iframe title="Localização" src={mapEmbedUrl(client.location)} /><a href={mapOpenUrl(client.location)} target="_blank" rel="noreferrer">Abrir mapa</a></div> : <p className="muted-note">{client.locationConsent ? 'Localização não capturada.' : 'A pessoa não permitiu a localização. O endereço digitado permanece salvo.'}</p>}</section><section className="risk-card panel"><div className="risk-score"><div className={`score-ring ${risk.level==='Baixo risco'?'low':risk.level==='Médio risco'?'medium':'high'}`} style={{'--score':`${risk.score*3.6}deg`} as React.CSSProperties}><span>{risk.score}<small>/100</small></span></div><div><p className="eyebrow">ANÁLISE AUTOMÁTICA</p><h3>{risk.level}</h3><p>{risk.level==='Baixo risco'?'Perfil recomendado para análise de crédito.':'Revise os fatores antes de aprovar.'}</p></div></div><ul>{risk.reasons.slice(0,3).map(reason=><li key={reason}>✓ {reason}</li>)}</ul></section></div><section className="summary-grid three"><SummaryCard label="Principal em aberto" value={currency(clientLedger(client.id,loans).principalDue)} detail="Só quita se pagar de uma vez"/><SummaryCard label="Juros recebidos" value={currency(clientLedger(client.id,loans).interestPaid)} detail={`${clientLedger(client.id,loans).weeklyCount} pagamentos semanais`} tone="green"/><SummaryCard label="Somatória do cliente" value={currency(clientLedger(client.id,loans).receivedTotal)} detail="Juros + principal já pagos" tone="gold"/></section><div className="detail-grid"><section className="panel"><div className="panel-head"><h3>Empréstimos</h3></div>{clientLoans.length?<div className="compact-list">{clientLoans.map(loan=><button key={loan.id} onClick={()=>onOpenLoan(loan.id)}><span><b>{loan.contractNumber}</b><small>{currency(loan.principal)} • {loan.weeks} semanas</small></span><StatusBadge status={loan.status}/><strong>{currency(loanBalance(loan))}</strong><i>›</i></button>)}</div>:<EmptyState title="Sem empréstimos" text="Este cliente ainda não possui contratos."/>}</section><section className="panel"><div className="panel-head"><h3>Referências pessoais</h3><span className="subtle-count">{client.references.filter(ref=>ref.validated).length}/{client.references.length} validadas</span></div><div className="reference-list">{client.references.map((ref,index)=><div key={`${ref.name}-${index}`}><span className="avatar light">{initials(ref.name)}</span><span><b>{ref.name}</b><small>{ref.relation} • {ref.phone}</small></span><a className={ref.hasWhatsapp ? 'wa-button compact' : 'call-button compact'} href={referenceHref(ref)} target={ref.hasWhatsapp ? '_blank' : undefined} rel="noreferrer">{ref.hasWhatsapp ? 'WhatsApp' : 'Ligar'}</a>{ref.validated?<span className="verified">✓ Validada</span>:<button className="outline-button small" onClick={()=>onValidateReference(index)}>Validar</button>}</div>)}</div><div className="document-list"><h4>Documentos</h4>{listedDocuments(client.documents).length?listedDocuments(client.documents).map(file=><button key={`${file.label}-${file.fileName}`}>▤ {file.label}<span>{file.fileName}</span></button>):<p>Nenhum documento anexado.</p>}</div></section></div></>;
 }
 
 function LoansView({ loans, clients, onOpen, onNew }: {loans:Loan[];clients:Client[];onOpen:(id:string)=>void;onNew:()=>void}) {
