@@ -501,7 +501,7 @@ function LoanDetail({ loan, client, onContract, onRenegotiate, onConfirm, onRegi
   const progress = paid.length / Math.max(1, loan.installments.length) * 100;
   const late = loan.installments.filter(item => item.status === 'Atrasado');
   const subtitle = openWeekly
-    ? `Início ${shortDate(loan.startDate || loan.createdAt)} • Toda ${weekdayLabel(loan.weeklyWeekday)} • Conforme os pagamentos`
+    ? `Início ${shortDate(loan.startDate || loan.createdAt)} • Vencimento toda terça-feira • Conforme os pagamentos`
     : dual
       ? `Início ${shortDate(loan.startDate || loan.createdAt)} • Encerramento ${shortDate(summary?.endDate || loan.endDate || loan.createdAt)} • Mensal dia ${loan.monthlyDueDay} + ${weekdayLabel(loan.weeklyWeekday)}`
       : `Criado em ${shortDate(loan.createdAt)} • ${frequencyLabel(loanFrequency(loan))} • ${loan.interestMode === 'total' ? 'Juros fixos sobre o total' : 'Juros sobre saldo devedor'}`;
@@ -521,8 +521,8 @@ function LoanDetail({ loan, client, onContract, onRenegotiate, onConfirm, onRegi
     </section>
     {summary && openWeekly && (
       <div className="loan-live-summary dual">
-        <span><small>Pagamento semanal</small><b>{currency(loan.weeklyAmount || 0)}</b><em>{weekdayLabel(loan.weeklyWeekday)}</em></span>
-        <span><small>Semanais lançadas</small><b>{summary.weeklyCount}</b><em>Novas datas entram sozinhas</em></span>
+        <span><small>Pagamento semanal</small><b>{currency(loan.weeklyAmount || 0)}</b><em>Toda terça-feira</em></span>
+        <span><small>Terças lançadas</small><b>{summary.weeklyCount}</b><em>Novas datas entram sozinhas</em></span>
         <span><small>Já pago</small><b>{currency(summary.paidTotal)}</b><em>{paid.length} quitados</em></span>
         <span><small>Pendente</small><b>{currency(summary.pendingTotal)}</b><em>{loan.installments.length - paid.length} em aberto</em></span>
         <span><small>Atrasados</small><b>{currency(summary.lateTotal)}</b><em>{summary.lateCount} vencimento(s)</em></span>
@@ -575,7 +575,7 @@ function ClientHome({client,loans,settings,onPayment}:{client:Client;loans:Loan[
 
 function ContractModal({loan,client,settings,onClose}:{loan:Loan;client:Client;settings:AppSettings;onClose:()=>void}) {
   return <Modal title="Contrato digital" onClose={onClose} wide><div className="contract-toolbar"><span>Documento {loan.contractNumber}</span><button className="secondary-button" onClick={()=>window.print()}>Imprimir / salvar PDF</button></div><article className="contract-print"><header><div className="contract-logo"><span>L</span>Lucas <b>EMPRED</b></div><div><b>{loan.contractNumber}</b><small>Gerado em {shortDate(loan.createdAt)}</small></div></header><h1>CONTRATO PARTICULAR DE EMPRÉSTIMO</h1><p>Pelo presente instrumento, de um lado <b>{settings.companyName}</b>, inscrito sob {settings.document}, doravante CREDOR, e de outro <b>{client.name}</b>, CPF {client.cpf}, RG {client.rg}, residente em {client.address}, doravante DEVEDOR, acordam as condições abaixo.</p><h2>1. DO OBJETO E CONDIÇÕES</h2><p>O CREDOR entrega ao DEVEDOR a quantia de <b>{currency(loan.principal)}</b>. {isOpenWeeklyLoan(loan)
-    ? <>O DEVEDOR pagará <b>{currency(loan.weeklyAmount || 0)}</b> toda <b>{weekdayLabel(loan.weeklyWeekday)}</b>, sem prazo fixo em meses ou semanas. Os pagamentos semanais continuam enquanto o empréstimo estiver ativo, conforme a pessoa for pagando.</>
+    ? <>O DEVEDOR pagará <b>{currency(loan.weeklyAmount || 0)}</b> <b>toda terça-feira</b>, sem prazo fixo em meses ou semanas. Os pagamentos continuam em todas as terças do calendário enquanto o empréstimo estiver ativo, conforme a pessoa for pagando.</>
     : isDualScheduleLoan(loan)
     ? <>O valor emprestado será restituído em <b>{loan.termMonths} parcelas mensais de {currency(loan.installments.find(item => item.kind === 'monthly')?.amount || 0)}</b>, no dia <b>{loan.monthlyDueDay}</b> de cada mês, além de um pagamento semanal fixo de <b>{currency(loan.weeklyAmount || 0)}</b> toda <b>{weekdayLabel(loan.weeklyWeekday)}</b>, pelas datas reais do calendário, até <b>{shortDate(loan.endDate || loan.firstDueDate)}</b>.</>
     : <>O valor será restituído em <b>{loan.weeks} parcelas {loanFrequency(loan)==='monthly'?'mensais':'semanais'}</b>, com taxa contratual de <b>{loan.rate}%</b>, na modalidade {loan.interestMode==='total'?'fixa sobre o valor total':'sobre o saldo devedor'}.</>}</p><div className="contract-values"><span><small>Principal</small><b>{currency(loan.principal)}</b></span><span><small>Total previsto</small><b>{currency(loan.installments.reduce((s,i)=>s+i.amount,0))}</b></span><span><small>1º vencimento</small><b>{shortDate(loan.firstDueDate)}</b></span></div><h2>2. DO ATRASO</h2><p>Em caso de atraso, incidirá multa {loan.feeType==='fixed'?`fixa de ${currency(loan.feeValue)}`:`de ${loan.feeValue}%`} por parcela, além de juros de mora de {loan.lateInterest}% ao dia.</p><h2>3. DOS PAGAMENTOS</h2><p>Os pagamentos serão realizados por PIX para a chave {settings.pixKey}, sujeitos à confirmação do CREDOR. O histórico mantido no sistema integra este contrato.</p><h2>4. DA CIÊNCIA</h2><p>As partes declaram compreender e aceitar as condições financeiras, o cronograma e as regras de renegociação vinculada ao saldo devedor.</p><div className="contract-signatures"><div>{client.signature?<img src={client.signature} alt="Assinatura do cliente"/>:<span/>}<b>{client.name}</b><small>Devedor</small></div><div><span className="admin-signature">Lucas EMPRED</span><b>{settings.companyName}</b><small>Credor</small></div></div></article></Modal>;

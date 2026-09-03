@@ -31,7 +31,7 @@ export function PaymentScheduleTable({
           <p className="eyebrow">PAGAMENTOS NA ORDEM DAS DATAS</p>
           <h3>{title}</h3>
         </div>
-        <span>{monthlyCount ? `${monthlyCount} mensais · ${weeklyCount} semanais` : `${weeklyCount} pagamentos semanais`}</span>
+        <span>{monthlyCount ? `${monthlyCount} mensais · ${weeklyCount} semanais` : `${weeklyCount} terças`}</span>
       </div>
       <div className="table-scroll">
         <div className={`chrono-table ${hasActions ? 'with-actions' : ''}`}>

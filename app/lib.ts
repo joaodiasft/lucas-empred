@@ -476,6 +476,8 @@ export const WEEKDAY_OPTIONS = [
   { id: 0, short: 'Dom', label: 'Domingo' },
 ] as const;
 
+export const DEFAULT_WEEKLY_WEEKDAY = 2;
+
 export function weekdayLabel(day?: number) {
   return WEEKDAY_OPTIONS.find(item => item.id === day)?.label || '—';
 }
@@ -553,7 +555,7 @@ export function ensureOpenWeeklyInstallments(loan: Loan, asOf = new Date()): Loa
   const existing = new Set(loan.installments.map(item => item.dueDate));
   const generated = generateOpenWeeklyInstallments({
     weeklyAmount: loan.weeklyAmount || loan.weeklyInterest || 0,
-    weeklyWeekday: loan.weeklyWeekday ?? loan.paymentWeekdays?.[0] ?? 1,
+    weeklyWeekday: loan.weeklyWeekday ?? loan.paymentWeekdays?.[0] ?? DEFAULT_WEEKLY_WEEKDAY,
     startDate: loan.startDate || loan.createdAt,
     untilDate: until,
   }).filter(item => !existing.has(item.dueDate));
