@@ -2,7 +2,7 @@ export type Role = 'admin' | 'staff' | 'client';
 export type PayFrequency = 'daily' | 'weekly' | 'fortnightly' | 'monthly';
 export type LoanType = 'personal' | 'business' | 'emergency' | 'refinancing' | 'other';
 export type LoanCategory = 'cash' | 'vehicle' | 'home' | 'health' | 'education' | 'business' | 'other';
-export type LoanPlanMode = 'contract_total' | 'monthly_split' | 'fixed_installment' | 'dual_stream';
+export type LoanPlanMode = 'contract_total' | 'monthly_split' | 'fixed_installment' | 'dual_stream' | 'open_weekly';
 export type InstallmentKind = 'monthly' | 'weekly';
 export type PenaltyMode = 'none' | 'fixed_once' | 'percent_once' | 'fixed_daily' | 'percent_daily';
 export type Page = 'home' | 'clients' | 'new-client' | 'client-detail' | 'loans' | 'new-loan' | 'loan-detail' | 'payments' | 'calendar' | 'collections' | 'reports' | 'dashboard' | 'team' | 'settings' | 'client-home';
@@ -251,7 +251,8 @@ export function frequencyLabel(frequency: PayFrequency) {
   return 'Semanal';
 }
 
-export function periodLabel(loan: Pick<Loan, 'weeks' | 'frequency' | 'termMonths'>) {
+export function periodLabel(loan: Pick<Loan, 'weeks' | 'frequency' | 'termMonths' | 'planMode'>) {
+  if (loan.planMode === 'open_weekly') return 'Conforme os pagamentos';
   if (loan.termMonths) return loan.termMonths === 1 ? '1 mês' : `${loan.termMonths} meses`;
   const count = Math.max(1, loan.weeks);
   if (loanFrequency(loan) === 'monthly') return count === 1 ? '1 mês' : `${count} meses`;
@@ -272,6 +273,7 @@ export function planModeLabel(value?: LoanPlanMode) {
   if (value === 'monthly_split') return 'Total mensal dividido no calendário';
   if (value === 'fixed_installment') return 'Parcela fixa por vencimento';
   if (value === 'dual_stream') return 'Parcela mensal + pagamento semanal';
+  if (value === 'open_weekly') return 'Pagamento semanal em aberto';
   return 'Total do contrato em parcelas';
 }
 
@@ -485,7 +487,11 @@ export function installmentKindLabel(kind?: InstallmentKind) {
 }
 
 export function isDualScheduleLoan(loan: Pick<Loan, 'planMode' | 'installments'>) {
-  return loan.planMode === 'dual_stream' || loan.installments.some(item => item.kind === 'monthly' || item.kind === 'weekly');
+  return loan.planMode === 'dual_stream' || loan.planMode === 'open_weekly' || loan.installments.some(item => item.kind === 'monthly' || item.kind === 'weekly');
+}
+
+export function isOpenWeeklyLoan(loan: Pick<Loan, 'planMode'>) {
+  return loan.planMode === 'open_weekly';
 }
 
 function dueOnDay(year: number, month: number, day: number) {
@@ -501,6 +507,61 @@ function nextWeekdayAfter(start: Date, weekday: number) {
   const cursor = addDays(start, 1);
   while (cursor.getDay() !== weekday) cursor.setDate(cursor.getDate() + 1);
   return cursor;
+}
+
+export const OPEN_WEEKLY_LOOKAHEAD_WEEKS = 8;
+
+export function weeklyHorizonDate(startDate: string, asOf = new Date()) {
+  const start = parseIsoDate(startDate);
+  const today = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate(), 12, 0, 0);
+  const anchor = start > today ? start : today;
+  return toIsoDate(addDays(anchor, OPEN_WEEKLY_LOOKAHEAD_WEEKS * 7));
+}
+
+export function generateOpenWeeklyInstallments(input: {
+  weeklyAmount: number;
+  weeklyWeekday: number;
+  startDate: string;
+  untilDate?: string;
+}): Installment[] {
+  const weeklyAmount = Math.max(0, roundCents(input.weeklyAmount));
+  const weekday = ((Number(input.weeklyWeekday) % 7) + 7) % 7;
+  const start = parseIsoDate(input.startDate);
+  const until = input.untilDate || weeklyHorizonDate(input.startDate);
+  const rows: Installment[] = [];
+  let cursor = nextWeekdayAfter(start, weekday);
+  while (toIsoDate(cursor) <= until) {
+    rows.push({
+      id: uid('parc'),
+      number: 0,
+      dueDate: toIsoDate(cursor),
+      principal: 0,
+      interest: weeklyAmount,
+      amount: weeklyAmount,
+      paidAmount: 0,
+      status: 'Pendente',
+      kind: 'weekly',
+    });
+    cursor = addDays(cursor, 7);
+  }
+  return rows.map((item, index) => ({ ...item, number: index + 1 }));
+}
+
+export function ensureOpenWeeklyInstallments(loan: Loan, asOf = new Date()): Loan {
+  if (!isOpenWeeklyLoan(loan) || loan.status !== 'Ativo') return loan;
+  const until = weeklyHorizonDate(loan.startDate || loan.createdAt, asOf);
+  const existing = new Set(loan.installments.map(item => item.dueDate));
+  const generated = generateOpenWeeklyInstallments({
+    weeklyAmount: loan.weeklyAmount || loan.weeklyInterest || 0,
+    weeklyWeekday: loan.weeklyWeekday ?? loan.paymentWeekdays?.[0] ?? 1,
+    startDate: loan.startDate || loan.createdAt,
+    untilDate: until,
+  }).filter(item => !existing.has(item.dueDate));
+  if (!generated.length) return loan;
+  const installments = [...loan.installments, ...generated]
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.number - b.number)
+    .map((item, index) => ({ ...item, number: index + 1 }));
+  return { ...loan, installments, weeks: installments.length };
 }
 
 export interface DualScheduleInput {
@@ -566,7 +627,7 @@ export function displayEndDate(startDate: string, termMonths: number, installmen
   return installments.reduce((max, item) => item.dueDate > max ? item.dueDate : max, contract);
 }
 
-export function dualScheduleSummary(loan: Pick<Loan, 'principal' | 'startDate' | 'termMonths' | 'monthlyDueDay' | 'weeklyAmount' | 'weeklyWeekday' | 'endDate' | 'installments'>) {
+export function dualScheduleSummary(loan: Pick<Loan, 'principal' | 'startDate' | 'termMonths' | 'monthlyDueDay' | 'weeklyAmount' | 'weeklyWeekday' | 'endDate' | 'installments' | 'planMode'>) {
   const monthly = loan.installments.filter(item => item.kind === 'monthly');
   const weekly = loan.installments.filter(item => item.kind === 'weekly');
   const live = loan.installments.map(item => ({ ...item, status: liveStatus(item) }));
@@ -591,7 +652,8 @@ export function dualScheduleSummary(loan: Pick<Loan, 'principal' | 'startDate' |
     lateTotal: roundCents(late.reduce((sum, item) => sum + item.amount, 0)),
     nextDue: next,
     startDate: loan.startDate || loan.installments[0]?.dueDate || '',
-    endDate: loan.endDate || displayEndDate(loan.startDate || '', loan.termMonths || monthly.length || 1, loan.installments),
+    endDate: isOpenWeeklyLoan(loan) ? '' : (loan.endDate || displayEndDate(loan.startDate || '', loan.termMonths || monthly.length || 1, loan.installments)),
+    openEnded: isOpenWeeklyLoan(loan),
   };
 }
 
@@ -634,11 +696,12 @@ export function applyInstallmentPayment(loan: Loan, installmentId: string, payme
     receiptName: payment.receiptName || item.receiptName,
   } : item);
   const allPaid = installments.every(item => item.status === 'Pago');
-  return {
+  const updated: Loan = {
     ...loan,
     installments,
-    status: loan.status === 'Ativo' && allPaid ? 'Quitado' : loan.status,
+    status: loan.status === 'Ativo' && allPaid && !isOpenWeeklyLoan(loan) ? 'Quitado' : loan.status,
   };
+  return ensureOpenWeeklyInstallments(updated);
 }
 
 export function payableAmount(loan: Loan, installment: Installment) {

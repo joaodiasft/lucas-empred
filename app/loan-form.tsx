@@ -4,8 +4,8 @@ import { FormEvent, useMemo, useState } from 'react';
 import { FieldBlock, MoneyInput, PageHeader, RiskBadge } from './components';
 import { PaymentScheduleTable } from './loan-schedule';
 import {
-  AppSettings, Client, Loan, PenaltyMode, WEEKDAY_OPTIONS, contractEndDate, currency, displayEndDate,
-  dualScheduleSummary, formatRate, generateDualSchedule, rateFromInterest, riskFor, roundCents, toIsoDate, uid, weekdayLabel,
+  AppSettings, Client, Loan, PenaltyMode, WEEKDAY_OPTIONS, currency, dualScheduleSummary, formatRate,
+  generateOpenWeeklyInstallments, rateFromInterest, riskFor, roundCents, toIsoDate, uid, weekdayLabel,
 } from './lib';
 
 const penalties: { id: PenaltyMode; title: string; text: string }[] = [
@@ -31,41 +31,34 @@ export function NewLoanView({
 }) {
   const [clientId, setClientId] = useState(prefilledClient || clients[0]?.id || '');
   const [principal, setPrincipal] = useState(1000);
-  const [termMonths, setTermMonths] = useState(10);
   const [startDate, setStartDate] = useState(todayIso);
-  const [monthlyDueDay, setMonthlyDueDay] = useState(10);
   const [weeklyAmount, setWeeklyAmount] = useState(80);
   const [weeklyWeekday, setWeeklyWeekday] = useState(1);
   const [penaltyMode, setPenaltyMode] = useState<PenaltyMode>('fixed_daily');
   const [penaltyValue, setPenaltyValue] = useState(settings.feeType === 'fixed' ? Math.max(1, settings.feeValue) : 5);
 
   const preview = useMemo(
-    () => generateDualSchedule({ principal, startDate, termMonths, monthlyDueDay, weeklyAmount, weeklyWeekday }),
-    [principal, startDate, termMonths, monthlyDueDay, weeklyAmount, weeklyWeekday],
+    () => generateOpenWeeklyInstallments({ weeklyAmount, weeklyWeekday, startDate }),
+    [weeklyAmount, weeklyWeekday, startDate],
   );
   const summary = dualScheduleSummary({
-    principal, startDate, termMonths, monthlyDueDay, weeklyAmount, weeklyWeekday,
-    endDate: displayEndDate(startDate, termMonths, preview),
-    installments: preview,
+    principal, startDate, weeklyAmount, weeklyWeekday, installments: preview, planMode: 'open_weekly',
   });
-  const contractEnd = contractEndDate(startDate, termMonths);
-  const rate = rateFromInterest(principal, summary.weeklyTotal);
+  const rate = rateFromInterest(principal, weeklyAmount);
   const client = clients.find(item => item.id === clientId);
   const risk = client ? riskFor(client, loans, principal) : null;
-  const sampleBase = summary.monthlyAmount || weeklyAmount;
-  const sampleLate = sampleBase && penaltyMode !== 'none'
+  const sampleLate = weeklyAmount && penaltyMode !== 'none'
     ? penaltyMode === 'percent_daily'
-      ? roundCents(sampleBase + sampleBase * (penaltyValue / 100) * 5)
+      ? roundCents(weeklyAmount + weeklyAmount * (penaltyValue / 100) * 5)
       : penaltyMode === 'fixed_once'
-        ? roundCents(sampleBase + penaltyValue)
-        : roundCents(sampleBase + penaltyValue * 5)
-    : sampleBase;
+        ? roundCents(weeklyAmount + penaltyValue)
+        : roundCents(weeklyAmount + penaltyValue * 5)
+    : weeklyAmount;
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!clientId || !preview.length) return;
     const id = uid('emp');
-    const endDate = displayEndDate(startDate, termMonths, preview);
     onSave({
       id,
       clientId,
@@ -78,15 +71,12 @@ export function NewLoanView({
       frequency: 'weekly',
       loanType: 'personal',
       category: 'cash',
-      planMode: 'dual_stream',
-      termMonths,
+      planMode: 'open_weekly',
       weeklyInterest: weeklyAmount,
       weeklyAmount,
       weeklyWeekday,
       paymentWeekdays: [weeklyWeekday],
       startDate,
-      endDate,
-      monthlyDueDay,
       penaltyMode,
       penaltyValue: penaltyMode === 'none' ? 0 : penaltyValue,
       feeType: penaltyMode.includes('percent') ? 'percent' : 'fixed',
@@ -100,9 +90,9 @@ export function NewLoanView({
 
   return (
     <>
-      <PageHeader eyebrow="NOVA OPERAÇÃO" title="Novo empréstimo" subtitle="Informe o valor, os meses, o dia da parcela mensal e o pagamento semanal. O calendário monta as duas listas." />
+      <PageHeader eyebrow="NOVA OPERAÇÃO" title="Novo empréstimo" subtitle="Empréstimo semanal, sem prazo fixo. A pessoa vai pagando toda semana enquanto o contrato estiver ativo." />
       <form className="form-card loan-form" onSubmit={submit}>
-        <SectionTitle number="1" title="Cliente, valor e prazos" text="A parcela mensal divide o valor emprestado. O semanal é fixo e corre o calendário real até o encerramento." />
+        <SectionTitle number="1" title="Cliente, valor e pagamento semanal" text="Não tem prazo em meses nem em semanas. O vencimento entra toda semana, conforme a pessoa for pagando." />
 
         <div className="form-grid">
           <FieldBlock className="span-2" title="Cliente" hint="Quem recebe o empréstimo.">
@@ -110,22 +100,16 @@ export function NewLoanView({
               {clients.map(item => <option value={item.id} key={item.id}>{item.name} — {item.cpf}</option>)}
             </select>
           </FieldBlock>
-          <FieldBlock title="Valor emprestado" hint="Dividido igualmente pelos meses.">
+          <FieldBlock title="Valor emprestado" hint="O que você entrega ao cliente.">
             <MoneyInput value={principal} onChange={value => setPrincipal(Math.max(0, value))} required />
           </FieldBlock>
-          <FieldBlock title="Prazo em meses" hint={`${termMonths} ${termMonths === 1 ? 'mês' : 'meses'} de parcela mensal.`}>
-            <input type="number" min="1" max="60" value={termMonths} onChange={event => setTermMonths(Math.max(1, Number(event.target.value) || 1))} />
-          </FieldBlock>
-          <FieldBlock title="Data de início" hint="Você informa. O encerramento é esta data mais o prazo.">
+          <FieldBlock title="Data de início" hint="A primeira cobrança é na semana seguinte a esta data.">
             <input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} required />
           </FieldBlock>
-          <FieldBlock title="Dia do vencimento mensal" hint="A primeira parcela cai neste dia do mês seguinte.">
-            <input type="number" min="1" max="31" value={monthlyDueDay} onChange={event => setMonthlyDueDay(Math.max(1, Math.min(31, Number(event.target.value) || 1)))} />
-          </FieldBlock>
-          <FieldBlock title="Pagamento semanal" hint="Valor fixo em todo o período ativo.">
+          <FieldBlock title="Pagamento semanal" hint="Valor fixo de toda semana.">
             <MoneyInput value={weeklyAmount} onChange={value => setWeeklyAmount(Math.max(0, value))} required />
           </FieldBlock>
-          <FieldBlock className="span-2" title="Dia da semana do semanal" hint="A primeira cobrança é na próxima ocorrência depois do início.">
+          <FieldBlock className="span-2" title="Dia da semana" hint="A primeira cobrança é na próxima ocorrência depois do início.">
             <div className="weekday-picker">
               {WEEKDAY_OPTIONS.map(day => (
                 <button type="button" key={day.id} className={weeklyWeekday === day.id ? 'active' : ''} onClick={() => setWeeklyWeekday(day.id)}>
@@ -134,14 +118,6 @@ export function NewLoanView({
               ))}
             </div>
           </FieldBlock>
-        </div>
-
-        <div className="monthly-formula">
-          <span><small>Emprestado</small><b>{currency(principal)}</b></span>
-          <i>÷</i>
-          <span><small>Meses</small><b>{termMonths}</b></span>
-          <i>=</i>
-          <span className="highlight"><small>Parcela mensal</small><b>{currency(summary.monthlyAmount)}</b></span>
         </div>
 
         {risk && (
@@ -155,17 +131,17 @@ export function NewLoanView({
         )}
 
         <div className="loan-live-summary dual">
+          <span><small>Valor emprestado</small><b>{currency(principal)}</b><em>Registrado no contrato</em></span>
           <span><small>Início</small><b>{startDate.split('-').reverse().join('/')}</b><em>Informado</em></span>
-          <span><small>Encerramento</small><b>{summary.endDate.split('-').reverse().join('/')}</b><em>Contrato {contractEnd.split('-').reverse().join('/')}</em></span>
-          <span><small>Parcela mensal</small><b>{currency(summary.monthlyAmount)}</b><em>Todo dia {monthlyDueDay}</em></span>
+          <span><small>Encerramento</small><b>Em aberto</b><em>Conforme os pagamentos</em></span>
           <span><small>Pagamento semanal</small><b>{currency(weeklyAmount)}</b><em>{weekdayLabel(weeklyWeekday)}</em></span>
-          <span><small>Semanais no período</small><b>{summary.weeklyCount}</b><em>Pelas datas reais</em></span>
-          <span><small>Total das mensais</small><b>{currency(summary.monthlyTotal)}</b><em>Valor emprestado</em></span>
-          <span><small>Total dos semanais</small><b>{currency(summary.weeklyTotal)}</b><em>{formatRate(rate)}% sobre o emprestado</em></span>
-          <span className="highlight"><small>Total geral previsto</small><b>{currency(summary.grandTotal)}</b><em>Sem atraso</em></span>
+          <span><small>Próximas semanas</small><b>{summary.weeklyCount}</b><em>O calendário segue sozinho</em></span>
+          <span><small>Já previsto nesta tela</small><b>{currency(summary.weeklyTotal)}</b><em>{formatRate(rate)}% da primeira semana</em></span>
+          <span><small>Próximo vencimento</small><b>{summary.nextDue ? summary.nextDue.dueDate.split('-').reverse().join('/') : '—'}</b><em>{currency(weeklyAmount)}</em></span>
+          <span className="highlight"><small>Como funciona</small><b>Sem prazo</b><em>Continua enquanto estiver ativo</em></span>
         </div>
 
-        <SectionTitle number="2" title="Juros por atraso" text="Só entra se a parcela vencer sem pagamento. Vale para mensal e semanal." />
+        <SectionTitle number="2" title="Juros por atraso" text="Só entra se a parcela da semana vencer sem pagamento." />
         <div className="penalty-options compact">
           {penalties.map(option => (
             <button type="button" key={option.id} className={penaltyMode === option.id ? 'active' : ''} onClick={() => setPenaltyMode(option.id)}>
@@ -188,12 +164,12 @@ export function NewLoanView({
             <div className="penalty-example">
               <small>Exemplo com 5 dias de atraso</small>
               <b>{currency(sampleLate)}</b>
-              <p>Uma parcela de {currency(sampleBase)} passa para este valor.</p>
+              <p>Uma semana de {currency(weeklyAmount)} passa para este valor.</p>
             </div>
           </div>
         )}
 
-        <SectionTitle number="3" title="Tabela cronológica" text="Mensal e semanal aparecem separados. No mesmo dia, o sistema mostra o total devido." />
+        <SectionTitle number="3" title="Próximos pagamentos semanais" text="A tabela mostra as próximas semanas. Enquanto o empréstimo estiver ativo, novas datas entram sozinhas." />
         <PaymentScheduleTable installments={preview} />
 
         <div className="form-actions">

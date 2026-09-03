@@ -10,7 +10,7 @@ import { NewLoanView } from './loan-form';
 import { PaymentScheduleTable } from './loan-schedule';
 import { PaymentsView, RegisterPaymentModal } from './payments';
 import { ReportsView } from './reports';
-import { AccessAccount, AppSettings, Client, GeoLocation, Installment, Loan, Page, PayFrequency, PaymentRecord, Reference, Role, TeamMember, applyInstallmentPayment, callHref, compressImage, currency, daysLate, defaultSettings, digitsOnly, dualScheduleSummary, formatAddress, formatRate, frequencyLabel, generateInstallments, initials, isClientActive, isDualScheduleLoan, loanBalance, loanFrequency, mapEmbedUrl, mapOpenUrl, payableAmount, periodLabel, persistGet, persistSet, rateFromInterest, referenceHref, riskFor, roundCents, seedAccounts, seedClients, seedLoans, seedTeam, shortDate, uid, weekdayLabel, whatsappHref } from './lib';
+import { AccessAccount, AppSettings, Client, GeoLocation, Installment, Loan, Page, PayFrequency, PaymentRecord, Reference, Role, TeamMember, applyInstallmentPayment, callHref, compressImage, currency, daysLate, defaultSettings, digitsOnly, dualScheduleSummary, ensureOpenWeeklyInstallments, formatAddress, formatRate, frequencyLabel, generateInstallments, initials, isClientActive, isDualScheduleLoan, isOpenWeeklyLoan, loanBalance, loanFrequency, mapEmbedUrl, mapOpenUrl, payableAmount, periodLabel, persistGet, persistSet, rateFromInterest, referenceHref, riskFor, roundCents, seedAccounts, seedClients, seedLoans, seedTeam, shortDate, uid, weekdayLabel, whatsappHref } from './lib';
 
 function usePersistentState<T>(key: string, initial: T) {
   const [state, setState] = useState<T>(initial);
@@ -72,6 +72,13 @@ export default function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
+
+  useEffect(() => {
+    setLoans(items => {
+      const next = items.map(item => ensureOpenWeeklyInstallments(item));
+      return next.some((loan, index) => loan !== items[index]) ? next : items;
+    });
+  }, [loans, setLoans]);
 
   const notify = (message: string) => setToast(message);
   const navigate = (target: Page, id?: string) => {
@@ -483,18 +490,21 @@ function ClientDetail({ client, loans, onOpenLoan, onNewLoan, onValidateReferenc
 
 function LoansView({ loans, clients, onOpen, onNew }: {loans:Loan[];clients:Client[];onOpen:(id:string)=>void;onNew:()=>void}) {
   const [search,setSearch]=useState('');const [filter,setFilter]=useState('Todos');const list=loans.filter(loan=>{const client=clients.find(c=>c.id===loan.clientId);return `${client?.name} ${loan.contractNumber}`.toLowerCase().includes(search.toLowerCase())&&(filter==='Todos'||loan.status===filter)});
-  return <><PageHeader eyebrow="CARTEIRA" title="Empréstimos" subtitle={`${loans.filter(item=>item.status==='Ativo').length} contratos ativos`} action={<button className="primary-button" onClick={onNew}>＋ Novo empréstimo</button>}/><section className="summary-grid three"><SummaryCard label="Capital emprestado" value={currency(loans.reduce((sum,loan)=>sum+loan.principal,0))}/><SummaryCard label="Saldo da carteira" value={currency(loans.reduce((sum,loan)=>sum+loanBalance(loan),0))} tone="gold"/><SummaryCard label="Juros contratados" value={currency(loans.reduce((sum,loan)=>sum+loan.installments.reduce((s,i)=>s+i.interest,0),0))} tone="green"/></section><div className="toolbar"><label className="search-field"><span>⌕</span><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar cliente ou contrato"/></label><select value={filter} onChange={e=>setFilter(e.target.value)}><option>Todos</option><option>Ativo</option><option>Quitado</option><option>Renegociado</option></select></div><section className="loan-card-grid">{list.map(loan=>{const client=clients.find(c=>c.id===loan.clientId)!;const paid=loan.installments.filter(i=>i.status==='Pago').length;return <button className="loan-card" key={loan.id} onClick={()=>onOpen(loan.id)}><div className="loan-card-top"><PersonPhoto name={client.name} photo={client.photo} /><span><b>{client.name}</b><small>{loan.contractNumber}</small></span><StatusBadge status={loan.status}/></div><div className="loan-values"><span><small>Emprestado</small><b>{currency(loan.principal)}</b></span><span><small>Saldo</small><b>{currency(loanBalance(loan))}</b></span></div><div className="progress"><span style={{width:`${paid/loan.installments.length*100}%`}}/></div><div className="loan-card-foot"><span>{paid} de {loan.installments.length} · {frequencyLabel(loanFrequency(loan))}</span><b>{loan.rate}% juros</b></div></button>})}</section>{!list.length&&<EmptyState title="Nenhum empréstimo" text="Ajuste os filtros ou crie um novo contrato." action={<button className="primary-button" onClick={onNew}>Novo empréstimo</button>}/>}</>;
+  return <><PageHeader eyebrow="CARTEIRA" title="Empréstimos" subtitle={`${loans.filter(item=>item.status==='Ativo').length} contratos ativos`} action={<button className="primary-button" onClick={onNew}>＋ Novo empréstimo</button>}/><section className="summary-grid three"><SummaryCard label="Capital emprestado" value={currency(loans.reduce((sum,loan)=>sum+loan.principal,0))}/><SummaryCard label="Saldo da carteira" value={currency(loans.reduce((sum,loan)=>sum+loanBalance(loan),0))} tone="gold"/><SummaryCard label="Juros contratados" value={currency(loans.reduce((sum,loan)=>sum+loan.installments.reduce((s,i)=>s+i.interest,0),0))} tone="green"/></section><div className="toolbar"><label className="search-field"><span>⌕</span><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar cliente ou contrato"/></label><select value={filter} onChange={e=>setFilter(e.target.value)}><option>Todos</option><option>Ativo</option><option>Quitado</option><option>Renegociado</option></select></div><section className="loan-card-grid">{list.map(loan=>{const client=clients.find(c=>c.id===loan.clientId)!;const paid=loan.installments.filter(i=>i.status==='Pago').length;return <button className="loan-card" key={loan.id} onClick={()=>onOpen(loan.id)}><div className="loan-card-top"><PersonPhoto name={client.name} photo={client.photo} /><span><b>{client.name}</b><small>{loan.contractNumber}</small></span><StatusBadge status={loan.status}/></div><div className="loan-values"><span><small>Emprestado</small><b>{currency(loan.principal)}</b></span><span><small>Saldo</small><b>{currency(loanBalance(loan))}</b></span></div><div className="progress"><span style={{width:`${paid/loan.installments.length*100}%`}}/></div><div className="loan-card-foot"><span>{paid} de {loan.installments.length} · {isOpenWeeklyLoan(loan) ? 'Semanal em aberto' : frequencyLabel(loanFrequency(loan))}</span><b>{isOpenWeeklyLoan(loan) ? periodLabel(loan) : `${loan.rate}% juros`}</b></div></button>})}</section>{!list.length&&<EmptyState title="Nenhum empréstimo" text="Ajuste os filtros ou crie um novo contrato." action={<button className="primary-button" onClick={onNew}>Novo empréstimo</button>}/>}</>;
 }
 
 function LoanDetail({ loan, client, onContract, onRenegotiate, onConfirm, onRegister }: {loan:Loan;client:Client;onContract:()=>void;onRenegotiate:()=>void;onConfirm:(id:string)=>void;onRegister:(id:string)=>void}) {
   const dual = isDualScheduleLoan(loan);
+  const openWeekly = isOpenWeeklyLoan(loan);
   const summary = dual ? dualScheduleSummary(loan) : null;
   const paid = loan.installments.filter(item => item.status === 'Pago');
-  const progress = paid.length / loan.installments.length * 100;
+  const progress = paid.length / Math.max(1, loan.installments.length) * 100;
   const late = loan.installments.filter(item => item.status === 'Atrasado');
-  const subtitle = dual
-    ? `Início ${shortDate(loan.startDate || loan.createdAt)} • Encerramento ${shortDate(summary?.endDate || loan.endDate || loan.createdAt)} • Mensal dia ${loan.monthlyDueDay} + ${weekdayLabel(loan.weeklyWeekday)}`
-    : `Criado em ${shortDate(loan.createdAt)} • ${frequencyLabel(loanFrequency(loan))} • ${loan.interestMode === 'total' ? 'Juros fixos sobre o total' : 'Juros sobre saldo devedor'}`;
+  const subtitle = openWeekly
+    ? `Início ${shortDate(loan.startDate || loan.createdAt)} • Toda ${weekdayLabel(loan.weeklyWeekday)} • Conforme os pagamentos`
+    : dual
+      ? `Início ${shortDate(loan.startDate || loan.createdAt)} • Encerramento ${shortDate(summary?.endDate || loan.endDate || loan.createdAt)} • Mensal dia ${loan.monthlyDueDay} + ${weekdayLabel(loan.weeklyWeekday)}`
+      : `Criado em ${shortDate(loan.createdAt)} • ${frequencyLabel(loanFrequency(loan))} • ${loan.interestMode === 'total' ? 'Juros fixos sobre o total' : 'Juros sobre saldo devedor'}`;
   return <>
     <PageHeader eyebrow={loan.contractNumber} title={`Empréstimo de ${client.name}`} subtitle={subtitle} action={<><button className="secondary-button" onClick={onContract}>▤ Contrato</button>{loan.status === 'Ativo' && <button className="primary-button" onClick={onRenegotiate}>Renegociar</button>}</>} />
     <section className="loan-overview">
@@ -502,14 +512,24 @@ function LoanDetail({ loan, client, onContract, onRenegotiate, onConfirm, onRegi
         <p className="eyebrow">SALDO DEVEDOR</p>
         <h3>{currency(loanBalance(loan))}</h3>
         <div className="progress large"><span style={{ width: `${progress}%` }} /></div>
-        <p>{paid.length} de {loan.installments.length} pagamentos feitos • {Math.round(progress)}% concluído</p>
+        <p>{paid.length} de {loan.installments.length} pagamentos lançados • {openWeekly ? 'prazo em aberto' : `${Math.round(progress)}% concluído`}</p>
       </div>
       <div className="loan-stat"><small>Valor emprestado</small><b>{currency(loan.principal)}</b></div>
-      <div className="loan-stat"><small>Total previsto</small><b>{currency(loan.installments.reduce((sum, item) => sum + item.amount, 0))}</b></div>
-      <div className="loan-stat"><small>{dual ? 'Prazo' : 'Taxa e prazo'}</small><b>{dual ? periodLabel(loan) : `${loan.rate}% • ${periodLabel(loan)}`}</b></div>
+      <div className="loan-stat"><small>{openWeekly ? 'Já lançado' : 'Total previsto'}</small><b>{currency(loan.installments.reduce((sum, item) => sum + item.amount, 0))}</b></div>
+      <div className="loan-stat"><small>{openWeekly ? 'Prazo' : dual ? 'Prazo' : 'Taxa e prazo'}</small><b>{openWeekly || dual ? periodLabel(loan) : `${loan.rate}% • ${periodLabel(loan)}`}</b></div>
       <div className="loan-stat"><small>Situação</small><StatusBadge status={loan.status} /></div>
     </section>
-    {summary && (
+    {summary && openWeekly && (
+      <div className="loan-live-summary dual">
+        <span><small>Pagamento semanal</small><b>{currency(loan.weeklyAmount || 0)}</b><em>{weekdayLabel(loan.weeklyWeekday)}</em></span>
+        <span><small>Semanais lançadas</small><b>{summary.weeklyCount}</b><em>Novas datas entram sozinhas</em></span>
+        <span><small>Já pago</small><b>{currency(summary.paidTotal)}</b><em>{paid.length} quitados</em></span>
+        <span><small>Pendente</small><b>{currency(summary.pendingTotal)}</b><em>{loan.installments.length - paid.length} em aberto</em></span>
+        <span><small>Atrasados</small><b>{currency(summary.lateTotal)}</b><em>{summary.lateCount} vencimento(s)</em></span>
+        <span className="highlight"><small>Próximo vencimento</small><b>{summary.nextDue ? shortDate(summary.nextDue.dueDate) : '—'}</b><em>{summary.nextDue ? currency(summary.nextDue.amount) : 'Nada em aberto'}</em></span>
+      </div>
+    )}
+    {summary && !openWeekly && (
       <div className="loan-live-summary dual">
         <span><small>Parcela mensal</small><b>{currency(summary.monthlyAmount)}</b><em>Todo dia {loan.monthlyDueDay}</em></span>
         <span><small>Pagamento semanal</small><b>{currency(loan.weeklyAmount || 0)}</b><em>{weekdayLabel(loan.weeklyWeekday)}</em></span>
@@ -554,7 +574,9 @@ function ClientHome({client,loans,settings,onPayment}:{client:Client;loans:Loan[
 }
 
 function ContractModal({loan,client,settings,onClose}:{loan:Loan;client:Client;settings:AppSettings;onClose:()=>void}) {
-  return <Modal title="Contrato digital" onClose={onClose} wide><div className="contract-toolbar"><span>Documento {loan.contractNumber}</span><button className="secondary-button" onClick={()=>window.print()}>Imprimir / salvar PDF</button></div><article className="contract-print"><header><div className="contract-logo"><span>L</span>Lucas <b>EMPRED</b></div><div><b>{loan.contractNumber}</b><small>Gerado em {shortDate(loan.createdAt)}</small></div></header><h1>CONTRATO PARTICULAR DE EMPRÉSTIMO</h1><p>Pelo presente instrumento, de um lado <b>{settings.companyName}</b>, inscrito sob {settings.document}, doravante CREDOR, e de outro <b>{client.name}</b>, CPF {client.cpf}, RG {client.rg}, residente em {client.address}, doravante DEVEDOR, acordam as condições abaixo.</p><h2>1. DO OBJETO E CONDIÇÕES</h2><p>O CREDOR entrega ao DEVEDOR a quantia de <b>{currency(loan.principal)}</b>. {isDualScheduleLoan(loan)
+  return <Modal title="Contrato digital" onClose={onClose} wide><div className="contract-toolbar"><span>Documento {loan.contractNumber}</span><button className="secondary-button" onClick={()=>window.print()}>Imprimir / salvar PDF</button></div><article className="contract-print"><header><div className="contract-logo"><span>L</span>Lucas <b>EMPRED</b></div><div><b>{loan.contractNumber}</b><small>Gerado em {shortDate(loan.createdAt)}</small></div></header><h1>CONTRATO PARTICULAR DE EMPRÉSTIMO</h1><p>Pelo presente instrumento, de um lado <b>{settings.companyName}</b>, inscrito sob {settings.document}, doravante CREDOR, e de outro <b>{client.name}</b>, CPF {client.cpf}, RG {client.rg}, residente em {client.address}, doravante DEVEDOR, acordam as condições abaixo.</p><h2>1. DO OBJETO E CONDIÇÕES</h2><p>O CREDOR entrega ao DEVEDOR a quantia de <b>{currency(loan.principal)}</b>. {isOpenWeeklyLoan(loan)
+    ? <>O DEVEDOR pagará <b>{currency(loan.weeklyAmount || 0)}</b> toda <b>{weekdayLabel(loan.weeklyWeekday)}</b>, sem prazo fixo em meses ou semanas. Os pagamentos semanais continuam enquanto o empréstimo estiver ativo, conforme a pessoa for pagando.</>
+    : isDualScheduleLoan(loan)
     ? <>O valor emprestado será restituído em <b>{loan.termMonths} parcelas mensais de {currency(loan.installments.find(item => item.kind === 'monthly')?.amount || 0)}</b>, no dia <b>{loan.monthlyDueDay}</b> de cada mês, além de um pagamento semanal fixo de <b>{currency(loan.weeklyAmount || 0)}</b> toda <b>{weekdayLabel(loan.weeklyWeekday)}</b>, pelas datas reais do calendário, até <b>{shortDate(loan.endDate || loan.firstDueDate)}</b>.</>
     : <>O valor será restituído em <b>{loan.weeks} parcelas {loanFrequency(loan)==='monthly'?'mensais':'semanais'}</b>, com taxa contratual de <b>{loan.rate}%</b>, na modalidade {loan.interestMode==='total'?'fixa sobre o valor total':'sobre o saldo devedor'}.</>}</p><div className="contract-values"><span><small>Principal</small><b>{currency(loan.principal)}</b></span><span><small>Total previsto</small><b>{currency(loan.installments.reduce((s,i)=>s+i.amount,0))}</b></span><span><small>1º vencimento</small><b>{shortDate(loan.firstDueDate)}</b></span></div><h2>2. DO ATRASO</h2><p>Em caso de atraso, incidirá multa {loan.feeType==='fixed'?`fixa de ${currency(loan.feeValue)}`:`de ${loan.feeValue}%`} por parcela, além de juros de mora de {loan.lateInterest}% ao dia.</p><h2>3. DOS PAGAMENTOS</h2><p>Os pagamentos serão realizados por PIX para a chave {settings.pixKey}, sujeitos à confirmação do CREDOR. O histórico mantido no sistema integra este contrato.</p><h2>4. DA CIÊNCIA</h2><p>As partes declaram compreender e aceitar as condições financeiras, o cronograma e as regras de renegociação vinculada ao saldo devedor.</p><div className="contract-signatures"><div>{client.signature?<img src={client.signature} alt="Assinatura do cliente"/>:<span/>}<b>{client.name}</b><small>Devedor</small></div><div><span className="admin-signature">Lucas EMPRED</span><b>{settings.companyName}</b><small>Credor</small></div></div></article></Modal>;
 }
