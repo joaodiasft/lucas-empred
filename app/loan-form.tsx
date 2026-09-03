@@ -109,8 +109,10 @@ export function NewLoanView({
           <FieldBlock title="Pagamento semanal" hint="Valor fixo de toda terça-feira.">
             <MoneyInput value={weeklyAmount} onChange={value => setWeeklyAmount(Math.max(0, value))} required />
           </FieldBlock>
-          <FieldBlock title="Vencimento" hint="Todas as terças do mês, pelas datas reais do calendário.">
-            <input value="Toda terça-feira" readOnly />
+          <FieldBlock className="span-2" title="Dia da semana do semanal" hint="Vencimento já definido: toda terça-feira.">
+            <div className="weekday-picker only-tuesday">
+              <button type="button" className="active" aria-pressed="true">Ter</button>
+            </div>
           </FieldBlock>
         </div>
 
