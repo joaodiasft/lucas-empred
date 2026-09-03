@@ -2,9 +2,10 @@
 
 import { FormEvent, useMemo, useState } from 'react';
 import { FieldBlock, MoneyInput, PageHeader, RiskBadge } from './components';
+import { ThreeMonthForecast } from './loan-schedule';
 import {
   AppSettings, Client, DEFAULT_WEEKLY_WEEKDAY, Loan, PenaltyMode, currency, dailyFromWeekly, dualScheduleSummary,
-  formatRate, generateOpenWeeklyInstallments, interestBreakdown, rateFromInterest, riskFor, roundCents, toIsoDate, uid,
+  formatRate, generateOpenWeeklyInstallments, interestBreakdown, rateFromInterest, riskFor, roundCents, threeMonthEndDate, toIsoDate, uid,
   weeklyFromDaily,
 } from './lib';
 
@@ -115,7 +116,7 @@ export function NewLoanView({
   const [penaltyValue, setPenaltyValue] = useState(settings.feeType === 'fixed' ? Math.max(1, settings.feeValue) : 5);
 
   const preview = useMemo(
-    () => generateOpenWeeklyInstallments({ weeklyAmount, weeklyWeekday, startDate }),
+    () => generateOpenWeeklyInstallments({ weeklyAmount, weeklyWeekday, startDate, untilDate: threeMonthEndDate(startDate) }),
     [weeklyAmount, weeklyWeekday, startDate],
   );
   const summary = dualScheduleSummary({
@@ -251,6 +252,15 @@ export function NewLoanView({
             </div>
           </div>
         )}
+
+        <SectionTitle number="3" title="Como fica nos 3 meses" text="Cada mês mostra as terças, a conta do juros e a somatória. O valor emprestado continua o mesmo até o cliente pagar de uma vez." />
+        <ThreeMonthForecast
+          principal={principal}
+          dailyAmount={dailyAmount}
+          weeklyAmount={weeklyAmount}
+          weeklyWeekday={weeklyWeekday}
+          startDate={startDate}
+        />
 
         <div className="form-actions">
           <button type="button" className="secondary-button" onClick={onCancel}>Cancelar</button>

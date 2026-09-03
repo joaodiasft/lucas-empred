@@ -558,6 +558,35 @@ function nextWeekdayAfter(start: Date, weekday: number) {
 
 export const OPEN_WEEKLY_LOOKAHEAD_WEEKS = 8;
 
+export function threeMonthEndDate(startDate: string) {
+  const start = parseIsoDate(startDate);
+  return toIsoDate(new Date(start.getFullYear(), start.getMonth() + 3, 0, 12, 0, 0));
+}
+
+export function calendarDaysInclusive(fromIso: string, toIso: string) {
+  const from = parseIsoDate(fromIso.slice(0, 10));
+  const to = parseIsoDate(toIso.slice(0, 10));
+  if (to.getTime() < from.getTime()) return 0;
+  return Math.round((to.getTime() - from.getTime()) / 86400000) + 1;
+}
+
+export function monthStartIso(yearMonth: string) {
+  return `${yearMonth}-01`;
+}
+
+export function monthEndIso(yearMonth: string) {
+  const [year, month] = yearMonth.split('-').map(Number);
+  return toIsoDate(new Date(year, month, 0, 12, 0, 0));
+}
+
+export function threeMonthKeys(startDate: string) {
+  const start = parseIsoDate(startDate);
+  return Array.from({ length: 3 }, (_, index) => {
+    const date = new Date(start.getFullYear(), start.getMonth() + index, 1, 12, 0, 0);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  });
+}
+
 export function weeklyHorizonDate(startDate: string, asOf = new Date()) {
   const start = parseIsoDate(startDate);
   const today = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate(), 12, 0, 0);
@@ -592,6 +621,80 @@ export function generateOpenWeeklyInstallments(input: {
     cursor = addDays(cursor, 7);
   }
   return rows.map((item, index) => ({ ...item, number: index + 1 }));
+}
+
+export interface MonthForecastRow extends Installment {
+  runningTotal: number;
+  inLedger: boolean;
+}
+
+export interface MonthForecast {
+  key: string;
+  label: string;
+  from: string;
+  to: string;
+  days: number;
+  dailyTotal: number;
+  tuesdayCount: number;
+  tuesdayTotal: number;
+  runningTotal: number;
+  principalDue: number;
+  rows: MonthForecastRow[];
+}
+
+export function buildThreeMonthForecast(input: {
+  principal: number;
+  dailyAmount: number;
+  weeklyAmount: number;
+  weeklyWeekday: number;
+  startDate: string;
+  installments?: Installment[];
+}) {
+  const untilDate = threeMonthEndDate(input.startDate);
+  const generated = generateOpenWeeklyInstallments({
+    weeklyAmount: input.weeklyAmount,
+    weeklyWeekday: input.weeklyWeekday,
+    startDate: input.startDate,
+    untilDate,
+  });
+  const byDate = new Map((input.installments || []).map(item => [item.dueDate, item]));
+  const hasLedger = Boolean(input.installments?.length);
+  const rows = generated.map(item => {
+    const saved = byDate.get(item.dueDate);
+    return saved ? { ...item, ...saved, number: item.number } : item;
+  });
+  let running = 0;
+  const months: MonthForecast[] = threeMonthKeys(input.startDate).map(key => {
+    const from = input.startDate > monthStartIso(key) ? input.startDate : monthStartIso(key);
+    const to = monthEndIso(key);
+    const days = calendarDaysInclusive(from, to);
+    const monthRows = rows.filter(item => installmentMonthKey(item.dueDate) === key).map(item => {
+      running = roundCents(running + item.amount);
+      return { ...item, runningTotal: running, inLedger: !hasLedger || byDate.has(item.dueDate) };
+    });
+    return {
+      key,
+      label: monthLabel(key),
+      from,
+      to,
+      days,
+      dailyTotal: interestForDays(input.dailyAmount, days),
+      tuesdayCount: monthRows.length,
+      tuesdayTotal: roundCents(monthRows.reduce((sum, item) => sum + item.amount, 0)),
+      runningTotal: running,
+      principalDue: roundCents(input.principal),
+      rows: monthRows,
+    };
+  });
+  return {
+    untilDate,
+    months,
+    tuesdayCount: rows.length,
+    tuesdayTotal: roundCents(rows.reduce((sum, item) => sum + item.amount, 0)),
+    dailyAmount: roundCents(input.dailyAmount),
+    weeklyAmount: roundCents(input.weeklyAmount),
+    principal: roundCents(input.principal),
+  };
 }
 
 export function ensureOpenWeeklyInstallments(loan: Loan, asOf = new Date()): Loan {

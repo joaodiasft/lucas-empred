@@ -7,7 +7,7 @@ import { CalendarView } from './calendar';
 import { CollectionsView } from './collections';
 import { ConfirmModal, EmptyState, FieldBlock, Modal, MoneyInput, PageHeader, RiskBadge, SignaturePad, StatusBadge, Stepper, SummaryCard, Toast } from './components';
 import { InterestCalcPanel, NewLoanView } from './loan-form';
-import { PaymentScheduleTable } from './loan-schedule';
+import { PaymentScheduleTable, ThreeMonthForecast, loanForecastProps } from './loan-schedule';
 import { PaymentsView, RegisterPaymentModal } from './payments';
 import { ReportsView } from './reports';
 import { AccessAccount, AppSettings, Client, GeoLocation, Installment, Loan, Page, PayFrequency, PaymentRecord, Reference, Role, TeamMember, applyInstallmentPayment, applyPrincipalLumpPayment, callHref, clientLedger, compressImage, currency, daysLate, defaultSettings, digitsOnly, dualScheduleSummary, ensureOpenWeeklyInstallments, formatAddress, formatRate, frequencyLabel, generateInstallments, initials, isClientActive, isDualScheduleLoan, isOpenWeeklyLoan, loanBalance, loanDailyAmount, loanFrequency, loanLedger, mapEmbedUrl, mapOpenUrl, payableAmount, periodLabel, persistGet, persistSet, rateFromInterest, referenceHref, remainingPrincipal, riskFor, roundCents, seedAccounts, seedClients, seedLoans, seedTeam, shortDate, uid, weekdayLabel, weeklyFromDaily, whatsappHref } from './lib';
@@ -566,7 +566,9 @@ function LoanDetail({ loan, client, onContract, onRenegotiate, onConfirm, onRegi
     {late.length > 0 && <div className="alert-banner danger"><span>!</span><div><b>{late.length} pagamento(s) em atraso</b><p>{summary ? `Total atrasado: ${currency(summary.lateTotal)}. ` : ''}O saldo já considera multa até hoje.</p></div></div>}
     {loan.originalLoanId && <div className="alert-banner info"><span>↻</span><div><b>Contrato renegociado</b><p>Este contrato substitui o saldo do contrato {loan.originalLoanId} e mantém a rastreabilidade.</p></div></div>}
     {dual
-      ? <PaymentScheduleTable installments={loan.installments} loan={loan} title="Tabela de pagamentos" onRegister={onRegister} onConfirm={onConfirm} />
+      ? openWeekly
+        ? <ThreeMonthForecast {...loanForecastProps(loan)} onRegister={onRegister} onConfirm={onConfirm} />
+        : <PaymentScheduleTable installments={loan.installments} loan={loan} title="Tabela de pagamentos" onRegister={onRegister} onConfirm={onConfirm} />
       : <section className="table-card"><div className="section-title"><div><p className="eyebrow">CRONOGRAMA</p><h3>Tabela de parcelas</h3></div><span>{loan.installments.length} semanas</span></div><div className="table-scroll"><div className="installment-table detail"><div className="table-row table-head"><span>Parcela</span><span>Vencimento</span><span>Valor</span><span>Encargos</span><span>Status</span><span></span></div>{loan.installments.map(item => { const due = payableAmount(loan, item); return <div className="table-row" key={item.id}><span><b>#{String(item.number).padStart(2, '0')}</b></span><span><b>{shortDate(item.dueDate)}</b>{daysLate(item.dueDate) > 0 && item.status !== 'Pago' && <small>{daysLate(item.dueDate)} dias de atraso</small>}</span><span><b>{currency(item.amount)}</b><small>Principal {currency(item.principal)}</small></span><span>{due > item.amount ? <b className="red-text">+ {currency(due - item.amount)}</b> : '—'}</span><StatusBadge status={item.status} /><span>{item.status !== 'Pago' && <button className="primary-button small" onClick={() => onRegister(item.id)}>Registrar</button>}{item.status === 'Aguardando' && <button className="outline-button small" onClick={() => onConfirm(item.id)}>Confirmar</button>}{item.receiptName && <small className="receipt">▤ {item.receiptName}</small>}</span></div>; })}</div></div></section>}
   </>;
 }
